@@ -191,3 +191,29 @@ test("choice questions without a criteria map fail fast locally, never reaching 
     restoreEnv();
   }
 });
+
+test("score questions with fewer than two criteria fail fast locally, never reaching the network", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key" });
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls++;
+    return jsonResponse({ answers: {} });
+  }) as typeof fetch;
+  try {
+    const client = new JevClient();
+    for (const criteria of [[], ["OnlyOne"]]) {
+      await assert.rejects(
+        client.evaluate({
+          state: "s",
+          questions: { bad: { type: "score", instructions: "Rate it.", criteria } as any },
+        }),
+        /needs criteria as an array/
+      );
+    }
+    assert.equal(fetchCalls, 0, "the malformed request never reached the network");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});

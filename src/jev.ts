@@ -86,6 +86,9 @@ export class JevClient {
         questions[id] = noul(q.instructions);
       } else if (q.type === "score") {
         // SDK 的 ScoreCriteria 是 [EntryType, EntryType, ...EntryType[]]：至少两级，索引即分数。
+        if (!Array.isArray(q.criteria) || q.criteria.length < 2) {
+          throw new Error(`Score question "${id}" needs criteria as an array of at least two levels.`);
+        }
         questions[id] = score(q.instructions, q.criteria as [string, string, ...string[]]);
       }
     }
