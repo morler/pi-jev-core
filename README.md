@@ -16,7 +16,7 @@ pi install /path/to/pi-jev-core
 pi install npm:pi-jev-core
 ```
 
-本包是纯 TypeScript 源码，由 pi 的扩展加载器（jiti）加载。它不是给 node 直接 `import` 的库；若要程序化引用，需经 tsx/jiti 等加载器按子路径导入（如 `pi-jev-core/src/jev.ts`）。
+本包是纯 TypeScript 源码，由 pi 的扩展加载器（jiti）加载。程序化引用（经 tsx/jiti 等加载器）直接导入入口：`import { JevClient } from "pi-jev-core"`；深路径导入（如 `pi-jev-core/src/jev.ts`）同样保留，便于只取单层。
 
 ## 配置平台
 

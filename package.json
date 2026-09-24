@@ -8,6 +8,15 @@
     "extensions": ["./extensions/index.ts"]
   },
   "files": ["extensions", "src", "README.md", "LICENSE"],
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./src/*": "./src/*"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx test/*.test.ts"
