@@ -322,3 +322,18 @@ test("JevClient works against the local JevK5 platform without an API key", asyn
   }
 });
 
+test("JevK5 rejects more options than answer letters", async () => {
+  const fetchImpl: typeof fetch = async () => jsonResponse({ answers: {} });
+  const criteria = Object.fromEntries(
+    Array.from({ length: 17 }, (_, i) => [`opt${i}`, `Option ${i}`])
+  );
+  await assert.rejects(
+    callJev("jevk5", "http://127.0.0.1:9", {
+      state: "s",
+      questions: { pick: { type: "choice", instructions: "Pick.", criteria } },
+      model: "jevk5-4b-v0.2",
+      fetch: fetchImpl,
+    }),
+    /only 16 answer letters/
+  );
+});

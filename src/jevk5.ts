@@ -158,6 +158,11 @@ export async function callJevK5(
     if (Object.keys(options).length < 2) {
       throw new Error(`JevK5 question "${id}" produced fewer than two options.`);
     }
+    if (Object.keys(options).length > LETTERS.length) {
+      throw new Error(
+        `JevK5 question "${id}" has ${Object.keys(options).length} options but only ${LETTERS.length} answer letters exist.`
+      );
+    }
     const criterion = describe(question.instructions) || question.type;
     const { probabilities, inputTokens: questionTokens } = await decide(
       baseUrl,

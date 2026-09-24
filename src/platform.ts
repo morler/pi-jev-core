@@ -24,6 +24,8 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   openrouter: { env: "OPENROUTER_API_KEY", secret: "openrouter_api_key", model: "typesafe/jev-1.13" },
   cloudflare: { env: "CLOUDFLARE_API_TOKEN", secret: "cloudflare_api_token", model: "typesafe/jev" },
   vercel: { env: "AI_GATEWAY_API_KEY", secret: "ai_gateway_api_key", model: "typesafe-ai/jev" },
+  // jevk5's env carries a server URL, not a credential; resolveCredential's jevk5 branch
+  // never returns null (isConfigured is always true), so spec.env/secret are never consulted.
   jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
 };
 
