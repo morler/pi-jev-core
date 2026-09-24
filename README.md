@@ -6,10 +6,11 @@ A minimal, standalone Pi extension: it connects to a Jev API and registers a `je
 
 ## Install
 
-Install as a local package from the repository directory:
+Install from a local checkout, or straight from GitHub:
 
 ```bash
-pi install /path/to/pi-jev-core
+pi install /path/to/pi-jev-core                # local checkout
+pi install git:github.com/morler/pi-jev-core   # from GitHub
 ```
 
 Once published to npm:
