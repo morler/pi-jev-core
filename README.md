@@ -1,45 +1,60 @@
 # pi-jev-core
 
-精简的独立 Pi 扩展：连接 Jev API，并注册 `jev_evaluate` 工具，支持 `noul`、`choice`、`score` 三种结构化判断。不包含工具路由、自动模式、技能发现或上下文压缩。
+English | [简体中文](./README.zh-CN.md)
 
-## 安装
+A minimal, standalone Pi extension: it connects to a Jev API and registers a `jev_evaluate` tool supporting three structured judgment types — `noul`, `choice`, and `score`. It contains no tool routing, auto mode, skill discovery, or context compaction.
 
-在仓库目录安装本地包：
+## Install
+
+Install as a local package from the repository directory:
 
 ```bash
 pi install /path/to/pi-jev-core
 ```
 
-发布到 npm 后可用：
+Once published to npm:
 
 ```bash
 pi install npm:pi-jev-core
 ```
 
-本包是纯 TypeScript 源码，由 pi 的扩展加载器（jiti）加载。程序化引用（经 tsx/jiti 等加载器）直接导入入口：`import { JevClient } from "pi-jev-core"`；深路径导入（如 `pi-jev-core/src/jev.ts`）同样保留，便于只取单层。
+This package ships pure TypeScript source, loaded by pi's extension loader (jiti). For programmatic use (via a loader such as tsx/jiti), import the entry point directly: `import { JevClient } from "pi-jev-core"`. Deep imports (e.g. `pi-jev-core/src/jev.ts`) remain available when you only need one layer.
 
-## 配置平台
+## Platforms
 
-默认使用 TypeSafe。设置 `JEV_PLATFORM` 并提供对应凭据；凭据也可放在 `~/.pi/agent/secrets/` 下表列文件中。
+TypeSafe is the default. Set `JEV_PLATFORM` and provide the matching credential; credentials may also live in the secret files listed below under `~/.pi/agent/secrets/`.
 
-| `JEV_PLATFORM` | 凭据环境变量 | Pi secret 文件 | 默认模型 |
+| `JEV_PLATFORM` | Credential env var | Pi secret file | Default model |
 |---|---|---|---|
-| `typesafe`（默认） | `TYPESAFE_API_KEY` | `typesafe_api_key` | `jev-latest` |
+| `typesafe` (default) | `TYPESAFE_API_KEY` | `typesafe_api_key` | `jev-latest` |
 | `openrouter` | `OPENROUTER_API_KEY` | `openrouter_api_key` | `typesafe/jev-1.13` |
 | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `cloudflare_api_token` | `typesafe/jev` |
 | `vercel` | `AI_GATEWAY_API_KEY` | `ai_gateway_api_key` | `typesafe-ai/jev` |
 
-Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可用 `JEV_MODEL` 覆盖模型；TypeSafe 平台另支持 `TYPESAFE_DEFAULT_MODEL`。不要把 API key 写入仓库或发送给模型。
+Cloudflare additionally requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`. Use `JEV_MODEL` to override the model; the TypeSafe platform also honors `TYPESAFE_DEFAULT_MODEL`. Never commit API keys or send them to the model.
 
-## `jev_evaluate` 工具
+## Local JevK5 platform (llama-server)
 
-工具把 `state` 和多个命名问题发送到当前 Jev 平台，返回答案、模型、用量、耗时和 provider 原始答案。问题说明：
+`JEV_PLATFORM=jevk5` routes evaluations to a local llama-server serving a JevK5 GGUF — no API key, no egress.
 
-- `noul`：判断是/否，返回是的概率。
-- `choice`：从 `criteria` 对象的候选项中选择；键是选项 ID，值是说明。
-- `score`：按 `criteria` 数组中的顺序进行评分，数组从最高等级排到最低等级；至少两级（数组索引即分数，从 0 开始）。
+| Env | Default | Meaning |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | Set to `jevk5` for the local model. |
+| `JEVK5_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
+| `JEVK5_TEMP` | `1.532` | Calibration temperature (1.532 = 4B, 1.42 = 2B). |
+| `JEV_MODEL` | `jevk5-4b-v0.2` | Model label reported with the answers. |
 
-一次请求示例：
+Each question runs one forward pass: the prompt is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at `JEVK5_TEMP` — the JevK5 reference recipe. Start the server with the model repo's `start_JevK5_4B.sh`.
+
+## The `jev_evaluate` tool
+
+The tool sends a `state` plus multiple named questions to the active Jev platform and returns answers, the model, usage, elapsed time, and each provider's raw answer. Question types:
+
+- `noul`: a yes/no judgment; returns the probability of yes.
+- `choice`: picks from candidates in the `criteria` object; keys are option IDs, values are descriptions.
+- `score`: rates along the `criteria` array in order, highest level first; at least two levels (the array index is the score, starting at 0).
+
+Example request:
 
 ```json
 {
@@ -69,9 +84,9 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
 }
 ```
 
-`state` 可以是字符串或 JSON 对象；一次请求可包含多个独立问题。`noul` 不需要 `criteria`。传入 `state` 的内容会发送到配置的平台，仅提交完成判断所需的信息。
+`state` may be a string or a JSON object; one request can carry multiple independent questions. `noul` needs no `criteria`. Whatever you pass as `state` is transmitted to the configured platform — submit only what the judgment needs.
 
-## 开发检查
+## Development checks
 
 ```bash
 npm install
@@ -79,18 +94,4 @@ npm test
 npm run typecheck
 ```
 
-API 客户端与平台适配器从 [`pi-jev`](https://github.com/TheoOliveira/pi-jev) MIT 许可代码中提取并精简；原许可见 `LICENSE`。
-
-## Local JevK5 platform (llama-server)
-
-`JEV_PLATFORM=jevk5` routes evaluations to a local llama-server serving a JevK5 GGUF — no API key, no egress.
-
-| Env | Default | Meaning |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | Set to `jevk5` for the local model. |
-| `JEVK5_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
-| `JEVK5_TEMP` | `1.532` | Calibration temperature (1.532 = 4B, 1.42 = 2B). |
-| `JEV_MODEL` | `jevk5-4b-v0.2` | Model label reported with the answers. |
-
-Each question runs one forward pass: the prompt is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at `JEVK5_TEMP` — the JevK5 reference recipe. Start the server with the model repo's `start_JevK5_4B.sh`.
-
+The API client and platform adapters are extracted and trimmed from the MIT-licensed [`pi-jev`](https://github.com/TheoOliveira/pi-jev); see `LICENSE` for the original notice.
