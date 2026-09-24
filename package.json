@@ -1,0 +1,33 @@
+{
+  "name": "pi-jev-core",
+  "version": "0.1.0",
+  "description": "Core Pi extension for Jev's Noul, Choice, and Score judgments",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "pi-coding-agent", "typesafe", "jev", "system-one"],
+  "pi": {
+    "extensions": ["./extensions/index.ts"]
+  },
+  "files": ["extensions", "src", "README.md", "LICENSE"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx test/*.test.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typebox": "1.3.27",
+    "typescript": "^5.7.0"
+  },
+  "license": "MIT"
+}
