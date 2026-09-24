@@ -2,9 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
+import { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -23,6 +24,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   openrouter: { env: "OPENROUTER_API_KEY", secret: "openrouter_api_key", model: "typesafe/jev-1.13" },
   cloudflare: { env: "CLOUDFLARE_API_TOKEN", secret: "cloudflare_api_token", model: "typesafe/jev" },
   vercel: { env: "AI_GATEWAY_API_KEY", secret: "ai_gateway_api_key", model: "typesafe-ai/jev" },
+  jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
 };
 
 /** Active platform from JEV_PLATFORM, defaulting to TypeSafe's own API. */
@@ -45,6 +47,15 @@ export interface Credential {
 
 /** API credential from the platform's environment variable, then its Pi secret file. */
 export function resolveCredential(platform: JevPlatform = resolvePlatform()): Credential | null {
+  if (platform === "jevk5") {
+    // Local llama-server needs no API key; the credential carries the server base URL.
+    const url = process.env.JEVK5_BASE_URL?.trim();
+    return {
+      key: url || JEVK5_DEFAULT_URL,
+      source: "env",
+      origin: url ? "$JEVK5_BASE_URL" : `built-in default (${JEVK5_DEFAULT_URL})`,
+    };
+  }
   const spec = JEV_PLATFORMS[platform];
 
   const envKey = process.env[spec.env]?.trim();
@@ -92,6 +103,11 @@ export async function callJev(
   call: JevCall
 ): Promise<JevRawResponse> {
   const doFetch: typeof fetch = call.fetch ?? ((input, init) => globalThis.fetch(input, init));
+
+  if (platform === "jevk5") {
+    // apiKey carries the llama-server base URL for this platform.
+    return callJevK5(apiKey, call, doFetch);
+  }
 
   if (platform === "typesafe") {
     const client = new TypeSafeClient({ apiKey, fetch: doFetch });

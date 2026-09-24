@@ -80,3 +80,17 @@ npm run typecheck
 ```
 
 API 客户端与平台适配器从 [`pi-jev`](https://github.com/TheoOliveira/pi-jev) MIT 许可代码中提取并精简；原许可见 `LICENSE`。
+
+## Local JevK5 platform (llama-server)
+
+`JEV_PLATFORM=jevk5` routes evaluations to a local llama-server serving a JevK5 GGUF — no API key, no egress.
+
+| Env | Default | Meaning |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | Set to `jevk5` for the local model. |
+| `JEVK5_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
+| `JEVK5_TEMP` | `1.532` | Calibration temperature (1.532 = 4B, 1.42 = 2B). |
+| `JEV_MODEL` | `jevk5-4b-v0.2` | Model label reported with the answers. |
+
+Each question runs one forward pass: the prompt is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at `JEVK5_TEMP` — the JevK5 reference recipe. Start the server with the model repo's `start_JevK5_4B.sh`.
+

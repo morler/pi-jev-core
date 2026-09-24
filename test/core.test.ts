@@ -217,3 +217,108 @@ test("score questions with fewer than two criteria fail fast locally, never reac
     restoreEnv();
   }
 });
+
+test("JevK5 tokenizes and reads letter logprobs from llama-server", async () => {
+  const urls: string[] = [];
+  const bodies: any[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    urls.push(url);
+    bodies.push(JSON.parse(String(init?.body)));
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1, 2, 3, 4] });
+    return jsonResponse({
+      completion_probabilities: [{
+        content: "A",
+        top_logprobs: [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.3 }]
+      }]
+    });
+  };
+
+  const response = await callJev("jevk5", "http://127.0.0.1:8008", {
+    state: { text: "billed twice" },
+    questions: {
+      team: { type: "choice", instructions: "Which team?", criteria: { billing: "Payments", tech: "Bugs" } }
+    },
+    model: "jevk5-4b-v0.2",
+    fetch: fetchImpl
+  });
+
+  assert.deepEqual(urls, ["http://127.0.0.1:8008/tokenize", "http://127.0.0.1:8008/completion"]);
+  assert.equal(bodies[0].parse_special, true);
+  assert.match(bodies[0].content, /im_start.*system/s);
+  assert.match(bodies[0].content, /billing: Payments/);
+  assert.equal(bodies[1].n_predict, 1);
+  assert.equal(bodies[1].temperature, 0);
+  assert.equal(bodies[1].cache_prompt, false);
+  const answer = response.answers.team as any;
+  assert.equal(answer.type, "choice");
+  assert.equal(answer.choice, "billing");
+  assert.ok(answer.probabilities.billing > answer.probabilities.tech);
+  const total = Object.values(answer.probabilities).reduce((a: number, b) => a + (b as number), 0);
+  assert.ok(Math.abs(total - 1) < 1e-9);
+  assert.equal(response.usage?.inputTokens, 4);
+});
+
+test("JevK5 maps noul to the true/false pair and score to the expected level", async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -0.2 }, { token: "B", logprob: -1.6 }]
+      }]
+    });
+  };
+  const restoreEnv = setEnv({ JEVK5_TEMP: "1" });
+  try {
+    const response = await callJev("jevk5", "http://127.0.0.1:9", {
+      state: "s",
+      questions: {
+        ready: { type: "noul", instructions: "Ready?" },
+        depth: { type: "score", instructions: "Rate.", criteria: ["Low", "High"] }
+      },
+      model: "jevk5-4b-v0.2",
+      fetch: fetchImpl
+    });
+    const ready = response.answers.ready as any;
+    assert.equal(ready.type, "noul");
+    // e^1.4 / (e^1.4 + 1) ~ 0.80 at temperature 1
+    assert.ok(ready.noul > 0.7 && ready.noul < 0.9, "noul = P(true)");
+    const depth = response.answers.depth as any;
+    // EV over levels [0,1] with p(0) ~ 0.80 sits between the levels, closer to 0.
+    assert.ok(depth.score > 0 && depth.score < 0.5, "score is the expected level");
+    assert.ok(depth.probabilities["0"] > depth.probabilities["1"]);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("JevClient works against the local JevK5 platform without an API key", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "jevk5" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1, 2] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -0.05 }, { token: "B", logprob: -3.0 }]
+      }]
+    });
+  }) as typeof fetch;
+  try {
+    const client = new JevClient();
+    assert.equal(client.isConfigured(), true, "local JevK5 needs no API key");
+    assert.match(client.getKeyOrigin() ?? "", /default/);
+    const result = await client.evaluate({
+      state: "The package arrived.",
+      questions: { delivered: { type: "noul", instructions: "Was the package delivered?" } }
+    });
+    assert.equal(result.answers.delivered.type, "noul");
+    assert.ok(Number(result.answers.delivered.value) > 0.5);
+    assert.equal(result.model, "jevk5-4b-v0.2");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});
+
