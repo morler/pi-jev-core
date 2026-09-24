@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.js";
 import { callJev } from "../src/platform.js";
+import { JevClient } from "../src/jev.js";
 
 function setEnv(patch: Record<string, string | undefined>): () => void {
   const previous = new Map(Object.keys(patch).map((key) => [key, process.env[key]]));
@@ -165,4 +166,28 @@ test("TypeSafe platform delegates to its SDK", async () => {
   assert.ok(calls > 0);
   assert.deepEqual(response.answers.ready, { noul: 0.65 });
   assert.equal(response.usage?.totalTokens, 3);
+});
+
+test("choice questions without a criteria map fail fast locally, never reaching the network", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key" });
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls++;
+    return jsonResponse({ answers: {} });
+  }) as typeof fetch;
+  try {
+    const client = new JevClient();
+    await assert.rejects(
+      client.evaluate({
+        state: "s",
+        questions: { bad: { type: "choice", instructions: "Pick one." } } as any,
+      }),
+      /needs criteria as a map/
+    );
+    assert.equal(fetchCalls, 0, "the malformed request never reached the network");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
 });

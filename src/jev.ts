@@ -76,6 +76,11 @@ export class JevClient {
     const questions: Record<string, unknown> = {};
     for (const [id, q] of Object.entries(request.questions)) {
       if (q.type === "choice") {
+        // The SDK validates list-vs-map but lets a missing criteria through as a malformed
+        // remote request; fail here instead, where the error names the question.
+        if (!q.criteria || typeof q.criteria !== "object" || Array.isArray(q.criteria)) {
+          throw new Error(`Choice question "${id}" needs criteria as a map of label -> description.`);
+        }
         questions[id] = choice(q.instructions, q.criteria);
       } else if (q.type === "noul") {
         questions[id] = noul(q.instructions);
