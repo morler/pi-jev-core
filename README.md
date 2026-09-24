@@ -34,6 +34,8 @@ TypeSafe is the default. Set `JEV_PLATFORM` and provide the matching credential;
 
 Cloudflare additionally requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`. Use `JEV_MODEL` to override the model; the TypeSafe platform also honors `TYPESAFE_DEFAULT_MODEL`. Never commit API keys or send them to the model.
 
+Switch the active platform at runtime with the `/jev-platform` command: with no argument it lists every platform with its credential origin and marks the active one; `/jev-platform <name>` switches and persists the choice to `~/.pi/agent/jev-platform` (path overridable via `JEV_PLATFORM_FILE`). Resolution order: `JEV_PLATFORM` env, then the persisted choice, then `typesafe`.
+
 ## Local JevK5 platform (llama-server)
 
 `JEV_PLATFORM=jevk5` routes evaluations to a local llama-server serving a JevK5 GGUF — no API key, no egress.
