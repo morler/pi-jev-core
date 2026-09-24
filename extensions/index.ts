@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { JevClient } from "../src/jev.js";
 import type { JevEvaluationRequest } from "../src/types.js";
-import { JEV_PLATFORMS, resolveCredential, resolveModel, type JevPlatform } from "../src/platform.js";
+import { JEV_PLATFORMS, persistPlatform, platformStorePath, resolveCredential, resolveModel, type JevPlatform } from "../src/platform.js";
 
 const questionSchema = Type.Union([
   Type.Object({
@@ -79,9 +79,10 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       process.env.JEV_PLATFORM = requested;
+      persistPlatform(requested as JevPlatform);
       jev = new JevClient();
       const origin = jev.getKeyOrigin() ?? "not configured";
-      ctx.ui.notify(`Jev platform switched to ${requested} (credential: ${origin}, model: ${resolveModel(requested as JevPlatform)})`, "info");
+      ctx.ui.notify(`Jev platform switched to ${requested} (credential: ${origin}, model: ${resolveModel(requested as JevPlatform)}; persisted to ${platformStorePath()})`, "info");
     },
   });
 }

@@ -29,10 +29,31 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
 };
 
-/** Active platform from JEV_PLATFORM, defaulting to TypeSafe's own API. */
+/** Where /jev-platform persists the choice for future sessions. */
+export function platformStorePath(): string {
+  return process.env.JEV_PLATFORM_FILE?.trim() || path.join(os.homedir(), ".pi", "agent", "jev-platform");
+}
+
+export function readPersistedPlatform(): JevPlatform | null {
+  try {
+    const raw = fs.readFileSync(platformStorePath(), "utf8").trim().toLowerCase();
+    return raw && raw in JEV_PLATFORMS ? (raw as JevPlatform) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistPlatform(platform: JevPlatform): void {
+  const store = platformStorePath();
+  fs.mkdirSync(path.dirname(store), { recursive: true });
+  fs.writeFileSync(store, platform + "\n");
+}
+
+/** Active platform: JEV_PLATFORM wins, then the persisted /jev-platform choice, then TypeSafe. */
 export function resolvePlatform(): JevPlatform {
   const raw = process.env.JEV_PLATFORM?.trim().toLowerCase();
-  return raw && raw in JEV_PLATFORMS ? (raw as JevPlatform) : "typesafe";
+  if (raw && raw in JEV_PLATFORMS) return raw as JevPlatform;
+  return readPersistedPlatform() ?? "typesafe";
 }
 
 /** Model id: explicit override, then JEV_MODEL, then the platform default. */

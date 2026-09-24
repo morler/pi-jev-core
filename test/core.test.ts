@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.js";
-import { callJev } from "../src/platform.js";
+import { callJev, resolvePlatform } from "../src/platform.js";
 import { JevClient } from "../src/jev.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
 
 function setEnv(patch: Record<string, string | undefined>): () => void {
   const previous = new Map(Object.keys(patch).map((key) => [key, process.env[key]]));
@@ -372,5 +374,37 @@ test("/jev-platform lists, validates, and switches platforms", async () => {
     assert.match(notifications.at(-1)![0], /Unknown platform/);
   } finally {
     restoreEnv();
+  }
+});
+
+test("switching platforms persists the choice for future sessions", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/jev-store-");
+  const store = dir + "/platform";
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key", JEV_PLATFORM_FILE: store });
+  const commands: Record<string, any> = {};
+  try {
+    extension({
+      registerTool() {},
+      registerCommand(name: string, definition: any) { commands[name] = definition; },
+    } as unknown as ExtensionAPI);
+    const notifications: Array<[string, string]> = [];
+    const ctx = { ui: { notify: (text: string, level: string) => { notifications.push([text, level]); } } } as any;
+
+    await commands["jev-platform"].handler("jevk5", ctx);
+    assert.equal(fs.readFileSync(store, "utf8").trim(), "jevk5", "the choice lands in the store file");
+    assert.equal(resolvePlatform(), "jevk5", "env still wins in-session");
+    assert.match(notifications.at(-1)![0], /persisted/);
+
+    // a fresh process resolves from the store when JEV_PLATFORM is unset
+    delete process.env.JEV_PLATFORM;
+    assert.equal(resolvePlatform(), "jevk5");
+    assert.equal(new JevClient().platform, "jevk5");
+
+    // invalid store content falls back to typesafe
+    fs.writeFileSync(store, "bogus");
+    assert.equal(resolvePlatform(), "typesafe");
+  } finally {
+    restoreEnv();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
