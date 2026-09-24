@@ -6,6 +6,13 @@
  */
 import type { JevCall, JevRawResponse } from "./platform.js";
 
+/** Loose question shape: the values of JevEvaluationRequest.questions. */
+interface RawQuestion {
+  type: string;
+  instructions?: unknown;
+  criteria?: unknown;
+}
+
 const LETTERS = "ABCDEFGHIJKLMNOP";
 export const JEVK5_DEFAULT_URL = "http://127.0.0.1:8008";
 /** Calibration temperature from the JevK5 recipe: 1.532 for the 4B, 1.42 for the 2B. */
@@ -34,9 +41,9 @@ function describe(entry: unknown): string {
 }
 
 /** Map a System One question onto the lettered option map JevK5's prompt expects. */
-function buildOptions(question: Record<string, any>): Record<string, string> {
+function buildOptions(question: RawQuestion): Record<string, string> {
   if (question.type === "noul") {
-    const criteria = question.criteria ?? {};
+    const criteria = (question.criteria ?? {}) as Record<string, unknown>;
     return {
       true: describe(criteria.true) || "The proposition is true.",
       false: describe(criteria.false) || "The proposition is false.",
@@ -44,7 +51,7 @@ function buildOptions(question: Record<string, any>): Record<string, string> {
   }
   const options: Record<string, string> = {};
   if (question.type === "choice") {
-    for (const [label, description] of Object.entries(question.criteria ?? {})) {
+    for (const [label, description] of Object.entries((question.criteria as Record<string, unknown> | undefined) ?? {})) {
       options[label] = describe(description) || label;
     }
   } else {
@@ -153,7 +160,7 @@ export async function callJevK5(
   const answers: Record<string, unknown> = {};
   let inputTokens = 0;
   for (const [id, rawQuestion] of Object.entries(call.questions)) {
-    const question = rawQuestion as Record<string, any>;
+    const question = rawQuestion as RawQuestion;
     const options = buildOptions(question);
     if (Object.keys(options).length < 2) {
       throw new Error(`JevK5 question "${id}" produced fewer than two options.`);
