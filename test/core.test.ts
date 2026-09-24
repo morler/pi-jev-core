@@ -47,7 +47,10 @@ test("jev_evaluate sends and normalizes all three question types", async () => {
 
   try {
     let tool: any;
-    extension({ registerTool(definition: any) { tool = definition; } } as unknown as ExtensionAPI);
+    extension({
+      registerTool(definition: any) { tool = definition; },
+      registerCommand() {},
+    } as unknown as ExtensionAPI);
     assert.equal(tool.name, "jev_evaluate");
 
     const result = await tool.execute("test-call", {
@@ -336,4 +339,38 @@ test("JevK5 rejects more options than answer letters", async () => {
     }),
     /only 16 answer letters/
   );
+});
+
+test("/jev-platform lists, validates, and switches platforms", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key" });
+  try {
+    const commands: Record<string, any> = {};
+    let tool: any;
+    extension({
+      registerTool(definition: any) { tool = definition; },
+      registerCommand(name: string, definition: any) { commands[name] = definition; },
+    } as unknown as ExtensionAPI);
+    assert.equal(tool.name, "jev_evaluate");
+    const command = commands["jev-platform"];
+    assert.ok(command, "the jev-platform command is registered");
+    const notifications: Array<[string, string]> = [];
+    const ctx = { ui: { notify: (text: string, level: string) => { notifications.push([text, level]); } } } as any;
+
+    await command.handler("", ctx);
+    const listText = notifications.at(-1)![0];
+    assert.match(listText, /Active platform: openrouter/);
+    assert.match(listText, /jevk5/);
+    assert.match(listText, /not configured/);
+
+    await command.handler("jevk5", ctx);
+    assert.equal(process.env.JEV_PLATFORM, "jevk5");
+    assert.match(notifications.at(-1)![0], /switched to jevk5/);
+
+    await command.handler("nope", ctx);
+    assert.equal(process.env.JEV_PLATFORM, "jevk5", "an unknown name must not switch");
+    assert.equal(notifications.at(-1)![1], "warning");
+    assert.match(notifications.at(-1)![0], /Unknown platform/);
+  } finally {
+    restoreEnv();
+  }
 });
