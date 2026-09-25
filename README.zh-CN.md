@@ -54,7 +54,7 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
 
 - `noul`：判断是/否，返回是的概率。
 - `choice`：从 `criteria` 对象的候选项中选择；键是选项 ID，值是说明。
-- `score`：按 `criteria` 数组中的顺序进行评分，数组从最高等级排到最低等级；至少两级（数组索引即分数，从 0 开始）。
+- `score`：按 `criteria` 数组中的顺序进行评分，等级从低到高排列；至少两级（数组索引即分数，从 0 开始，响应的 `legend` 字段即此映射）。
 
 一次请求示例：
 
@@ -87,6 +87,25 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
 ```
 
 `state` 可以是字符串或 JSON 对象；一次请求可包含多个独立问题。`noul` 不需要 `criteria`。传入 `state` 的内容会发送到配置的平台，仅提交完成判断所需的信息。
+
+## 技能：building-with-jev
+
+仓库附带 `building-with-jev` agent 技能（[`skills/building-with-jev/SKILL.md`](./skills/building-with-jev/SKILL.md)），改编自 [`dbreunig/building-with-jev-skill`](https://github.com/dbreunig/building-with-jev-skill)（上游面向 Python `typesafe_sdk`），对齐本包 API。内容覆盖 `noul`/`choice`/`score` 的问题设计、最小 state 构建、置信度门控组合模式，以及"症状 → 原因 → 修法"诊断表。
+
+相对上游的改编：
+
+- 示例全部改用 `JevClient.evaluate` / `jev_evaluate`；答案统一读 `.value`（choice 为选项名，score/noul 为数字），完整概率分布读 `.distribution`。
+- `instructions` 仅接受字符串——上游的对象/数组形态（`question`/`focus`/`inspect` 键）改为短句内联；扩展 `src/types.ts` 与 `src/jev.ts` 透传是文档写明的升级路径。
+- Noul 的 `true`/`false` 两侧 criteria 不透传（`noul(instructions)` 只收问题）；边界微妙时把两侧描述写进 instructions。
+- 可选字段防护模式：provider 没给答案时 `value`/`confidence` 为 `undefined`——缺答案走退路，不要硬转成 `0`；用导出的 `noulProbability(raw)` 区分"没答"与"答了 0"。
+
+三处改编均经真实响应核验（模型 `jev-1.13.0`）：choice/score 带 `confidence` 而 noul 不带；score 值是级别索引的概率加权均值。
+
+为你的 agent 安装该技能：
+
+```bash
+cp -r skills/building-with-jev ~/.pi/agent/skills/
+```
 
 ## 开发检查
 
