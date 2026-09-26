@@ -48,6 +48,19 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
 
 每个问题只跑一次前向推理：prompt 由服务端分词，答案字母的 logprob 经 `n_probs` 返回，再按 `JEVK5_TEMP` 做 softmax——即 JevK5 官方配方。用模型仓库的 `start_JevK5_4B.sh` 启动服务。
 
+## 本地 Decider 平台（llama-server）
+
+`JEV_PLATFORM=decider` 将判断请求路由到本地 llama-server 所服务的 decider GGUF（decider-4b v2.1）。按 decider-ai 的 plain 布局渲染请求，用 `decider_config.json` 的分类型校准温度做 softmax（choice 1.110、noul 1.560、score 1.287）；`DECIDER_TEMPERATURE` 可用单一温度覆盖整张表。score 问题遵循 decider 的孤立等级：每个等级单独一行是/否判断，归一化成等级分布后取期望作为分数。
+
+| 环境变量 | 默认值 | 含义 |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | 设为 `decider` 即使用本地模型。 |
+| `DECIDER_BASE_URL` | `http://127.0.0.1:8008` | llama-server 基础地址。 |
+| `DECIDER_TEMPERATURE` | 分类型温度表 | 为所有类型指定同一温度，关闭分类型映射。 |
+| `JEV_MODEL` | `decider-4b-v2.1` | 随答案返回的模型标签。 |
+
+每个评分行只跑一次前向推理：该行由服务端分词，答案字母的 logprob 经 `n_probs` 返回，再按该行类型的温度做 softmax——即 decider-ai 官方配方。用 llama-server 加载模型仓库的 `decider-4b-q6_k.gguf` 即可。
+
 ## `jev_evaluate` 工具
 
 工具把 `state` 和多个命名问题发送到当前 Jev 平台，返回答案、模型、用量、耗时和 provider 原始答案。问题说明：

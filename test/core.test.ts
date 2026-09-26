@@ -408,3 +408,152 @@ test("switching platforms persists the choice for future sessions", async () => 
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---- Decider platform (decider-4b via llama-server, plain layout) ----
+
+test("Decider tokenizes the plain layout and reads letter logprobs from llama-server", async () => {
+  const urls: string[] = [];
+  const bodies: any[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    urls.push(url);
+    bodies.push(JSON.parse(String(init?.body)));
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1, 2, 3, 4] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.3 }]
+      }]
+    });
+  };
+  const restoreEnv = setEnv({ DECIDER_TEMPERATURE: "1" });
+  try {
+    const response = await callJev("decider", "http://127.0.0.1:8008", {
+      state: { text: "billed twice" },
+      questions: {
+        team: { type: "choice", instructions: "Which team?", criteria: { billing: "Payments", tech: "Bugs" } }
+      },
+      model: "decider-4b-v2.1",
+      fetch: fetchImpl
+    });
+    assert.deepEqual(urls, [
+      "http://127.0.0.1:8008/tokenize",
+      "http://127.0.0.1:8008/tokenize",
+      "http://127.0.0.1:8008/tokenize",
+      "http://127.0.0.1:8008/completion"
+    ]);
+    assert.equal(bodies[0].content, "Context:\n");
+    assert.equal(bodies[1].content, '{"text":"billed twice"}');
+    assert.match(
+      bodies[2].content,
+      /^\n\nQuestion: Which team\?\nOptions:\n\(A\) billing: Payments\n\(B\) tech: Bugs\nAnswer: \($/
+    );
+    assert.equal(bodies[2].add_special, false);
+    assert.equal(bodies[3].n_predict, 1);
+    assert.equal(bodies[3].n_probs, 40);
+    assert.equal(bodies[3].temperature, 0);
+    assert.equal(bodies[3].cache_prompt, false);
+    assert.ok(Array.isArray(bodies[3].prompt), "completion takes the token array");
+    const answer = response.answers.team as any;
+    assert.equal(answer.type, "choice");
+    assert.equal(answer.choice, "billing");
+    // softmax at temperature 1: e^2.2 / (1 + e^2.2) ~ 0.90
+    assert.ok(answer.probabilities.billing > 0.85 && answer.probabilities.billing < 0.95);
+    assert.equal(response.model, "decider-4b-v2.1");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("Decider answers noul with P(yes) and score through isolated level rows", async () => {
+  let completions = 0;
+  const tails: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/tokenize")) {
+      const body = JSON.parse(String(init?.body));
+      if (body.content !== "Context:\n") tails.push(body.content);
+      return jsonResponse({ tokens: [1] });
+    }
+    completions += 1;
+    const logprobs = [
+      [{ token: "A", logprob: -0.2 }, { token: "B", logprob: -1.6 }],  // noul: P(yes) ~ 0.198
+      [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.3 }],  // level 0 fits ~ 0.10
+      [{ token: "A", logprob: -3.0 }, { token: "B", logprob: -0.05 }]  // level 1 fits ~ 0.95
+    ][completions - 1];
+    return jsonResponse({ completion_probabilities: [{ top_logprobs: logprobs }] });
+  };
+  const restoreEnv = setEnv({ DECIDER_TEMPERATURE: "1" });
+  try {
+    const response = await callJev("decider", "http://127.0.0.1:8008", {
+      state: "s",
+      questions: {
+        ready: { type: "noul", instructions: "Ready?" },
+        depth: { type: "score", instructions: "Rate.", criteria: ["0: Low", "1: High"] }
+      },
+      model: "decider-4b-v2.1",
+      fetch: fetchImpl
+    });
+    const ready = response.answers.ready as any;
+    assert.equal(ready.type, "noul");
+    assert.ok(ready.noul > 0.15 && ready.noul < 0.25, "noul = P(yes) of the no/yes pair");
+    assert.equal(completions, 3, "one yes/no row per score level");
+    assert.match(tails[2]!, /Proposed answer: Low\nDoes the proposed answer fit\?/);
+    assert.match(tails[3]!, /Proposed answer: High\nDoes the proposed answer fit\?/);
+    const depth = response.answers.depth as any;
+    // level fits ~ [0.10, 0.95] -> normalized ~ [0.095, 0.905], EV ~ 0.905
+    assert.ok(depth.score > 0.85 && depth.score < 0.95, "score is the expected level");
+    assert.ok(depth.probabilities["1"] > depth.probabilities["0"]);
+    assert.ok(depth.confidence > 0.7);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("JevClient works against the local Decider platform without an API key", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "decider", DECIDER_TEMPERATURE: "1" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1, 2] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -3.0 }, { token: "B", logprob: -0.05 }]
+      }]
+    });
+  }) as typeof fetch;
+  try {
+    const client = new JevClient();
+    assert.equal(client.isConfigured(), true, "local Decider needs no API key");
+    assert.match(client.getKeyOrigin() ?? "", /default/);
+    const result = await client.evaluate({
+      state: "The package arrived.",
+      questions: { delivered: { type: "noul", instructions: "Was the package delivered?" } }
+    });
+    assert.equal(result.answers.delivered.type, "noul");
+    assert.ok(Number(result.answers.delivered.value) > 0.9);
+    assert.equal(result.model, "decider-4b-v2.1");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});
+
+test("Decider rejects choice questions with more options than letters", async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1] });
+    return jsonResponse({ answers: {} });
+  };
+  const criteria = Object.fromEntries(
+    Array.from({ length: 27 }, (_, i) => [`opt${i}`, `Option ${i}`])
+  );
+  await assert.rejects(
+    callJev("decider", "http://127.0.0.1:9", {
+      state: "s",
+      questions: { pick: { type: "choice", instructions: "Pick.", criteria } },
+      model: "decider-4b-v2.1",
+      fetch: fetchImpl,
+    }),
+    /26 single-letter answer tokens/
+  );
+});

@@ -1,4 +1,5 @@
 export { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
+export { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
 export { JevClient, noulProbability } from "./jev.js";
 export {
   callJev,

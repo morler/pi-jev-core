@@ -3,9 +3,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
+import { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -27,6 +28,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   // jevk5's env carries a server URL, not a credential; resolveCredential's jevk5 branch
   // never returns null (isConfigured is always true), so spec.env/secret are never consulted.
   jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
+  decider: { env: "DECIDER_BASE_URL", secret: "decider_base_url", model: "decider-4b-v2.1" },
 };
 
 /** Where /jev-platform persists the choice for future sessions. */
@@ -77,6 +79,15 @@ export function resolveCredential(platform: JevPlatform = resolvePlatform()): Cr
       key: url || JEVK5_DEFAULT_URL,
       source: "env",
       origin: url ? "$JEVK5_BASE_URL" : `built-in default (${JEVK5_DEFAULT_URL})`,
+    };
+  }
+  if (platform === "decider") {
+    // Local llama-server needs no API key; the credential carries the server base URL.
+    const url = process.env.DECIDER_BASE_URL?.trim();
+    return {
+      key: url || DECIDER_DEFAULT_URL,
+      source: "env",
+      origin: url ? "$DECIDER_BASE_URL" : `built-in default (${DECIDER_DEFAULT_URL})`,
     };
   }
   const spec = JEV_PLATFORMS[platform];
@@ -130,6 +141,11 @@ export async function callJev(
   if (platform === "jevk5") {
     // apiKey carries the llama-server base URL for this platform.
     return callJevK5(apiKey, call, doFetch);
+  }
+
+  if (platform === "decider") {
+    // apiKey carries the llama-server base URL for this platform too.
+    return callDecider(apiKey, call, doFetch);
   }
 
   if (platform === "typesafe") {

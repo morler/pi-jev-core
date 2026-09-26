@@ -49,6 +49,19 @@ Switch the active platform at runtime with the `/jev-platform` command: with no 
 
 Each question runs one forward pass: the prompt is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at `JEVK5_TEMP` — the JevK5 reference recipe. Start the server with the model repo's `start_JevK5_4B.sh`.
 
+## Local Decider platform (llama-server)
+
+`JEV_PLATFORM=decider` routes evaluations to a local llama-server serving a decider GGUF (decider-4b v2.1). It renders decider-ai's plain layout and calibrates with the per-type temperatures from `decider_config.json` (choice 1.110, noul 1.560, score 1.287); `DECIDER_TEMPERATURE` overrides the map with one temperature. Score questions follow decider's isolated levels: one yes/no row per level, normalized into the level distribution whose expectation is the score.
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | Set to `decider` for the local model. |
+| `DECIDER_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
+| `DECIDER_TEMPERATURE` | per-type map | One temperature for every type, switching the map off. |
+| `JEV_MODEL` | `decider-4b-v2.1` | Model label reported with the answers. |
+
+Each scoring row is one forward pass: the row is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at the row type's temperature — the decider-ai reference recipe. Serve the repo's `decider-4b-q6_k.gguf` with llama-server.
+
 ## The `jev_evaluate` tool
 
 The tool sends a `state` plus multiple named questions to the active Jev platform and returns answers, the model, usage, elapsed time, and each provider's raw answer. Question types:
