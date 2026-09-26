@@ -4,10 +4,11 @@ import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
 import { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
+import { callHopper, HOPPER_DEFAULT_URL } from "./hopper.js";
 import { readConfig, updateConfig } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider" | "hopper";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -30,6 +31,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   // never returns null (isConfigured is always true), so spec.env/secret are never consulted.
   jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
   decider: { env: "DECIDER_BASE_URL", secret: "decider_base_url", model: "decider-4b-v2.1" },
+  hopper: { env: "HOPPER_BASE_URL", secret: "hopper_base_url", model: "hopper-4b-v1.1" },
 };
 
 /** Where /jev-platform persists the choice for future sessions. */
@@ -93,6 +95,15 @@ export function resolveCredential(platform: JevPlatform = resolvePlatform()): Cr
       origin: url ? "$DECIDER_BASE_URL" : `built-in default (${DECIDER_DEFAULT_URL})`,
     };
   }
+  if (platform === "hopper") {
+    // Local llama-server needs no API key; the credential carries the server base URL.
+    const url = process.env.HOPPER_BASE_URL?.trim();
+    return {
+      key: url || HOPPER_DEFAULT_URL,
+      source: "env",
+      origin: url ? "$HOPPER_BASE_URL" : `built-in default (${HOPPER_DEFAULT_URL})`,
+    };
+  }
   const spec = JEV_PLATFORMS[platform];
 
   const envKey = process.env[spec.env]?.trim();
@@ -149,6 +160,10 @@ export async function callJev(
   if (platform === "decider") {
     // apiKey carries the llama-server base URL for this platform too.
     return callDecider(apiKey, call, doFetch);
+  }
+
+  if (platform === "hopper") {
+    return callHopper(apiKey, call, doFetch);
   }
 
   if (platform === "typesafe") {

@@ -571,3 +571,166 @@ test("Decider rejects choice questions with more options than letters", async ()
     /26 single-letter answer tokens/
   );
 });
+
+// ---- Hopper platform (hopper-4b via llama-server, GGUF chat template + JSON user turn) ----
+
+test("Hopper applies the GGUF chat template and reads letter logprobs from llama-server", async () => {
+  const urls: string[] = [];
+  const bodies: any[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    urls.push(url);
+    bodies.push(JSON.parse(String(init?.body)));
+    if (url.endsWith("/apply-template")) return jsonResponse({ prompt: "<|im_start|>rendered" });
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1, 2, 3, 4] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.3 }]
+      }]
+    });
+  };
+
+  const restoreEnv = setEnv({ HOPPER_TEMPERATURE: "1" });
+  try {
+    const response = await callJev("hopper", "http://127.0.0.1:8008", {
+      state: { text: "billed twice" },
+      questions: {
+        team: { type: "choice", instructions: "Which team?", criteria: { billing: "Payments", tech: "Bugs" } }
+      },
+      model: "hopper-4b-v1.1",
+      fetch: fetchImpl
+    });
+
+    assert.deepEqual(urls, [
+      "http://127.0.0.1:8008/apply-template",
+      "http://127.0.0.1:8008/tokenize",
+      "http://127.0.0.1:8008/completion"
+    ]);
+    assert.deepEqual(bodies[0].messages[0], {
+      role: "system",
+      content: "You make decisions about a document under a policy. Read only what is written in the document. Reply with the letter of the correct option and nothing else."
+    });
+    const user = JSON.parse(bodies[0].messages[1].content);
+    assert.match(user.criterion, /Exactly one option is correct\.\n\nWhich team\?/);
+    assert.deepEqual(user.options, [
+      { letter: "A", description: "billing: Payments" },
+      { letter: "B", description: "tech: Bugs" }
+    ]);
+    assert.equal(bodies[1].content, "<|im_start|>rendered");
+    assert.equal(bodies[1].parse_special, true);
+    assert.equal(bodies[2].n_predict, 1);
+    assert.equal(bodies[2].temperature, 0);
+    assert.equal(bodies[2].cache_prompt, false);
+    const answer = response.answers.team as any;
+    assert.equal(answer.type, "choice");
+    assert.equal(answer.choice, "billing");
+    // e^2.2 / (1 + e^2.2) ~ 0.90 at temperature 1
+    assert.ok(answer.probabilities.billing > 0.85 && answer.probabilities.billing < 0.95);
+    const total = Object.values(answer.probabilities).reduce((a: number, b) => a + (b as number), 0);
+    assert.ok(Math.abs(total - 1) < 1e-9);
+    assert.equal(response.usage?.inputTokens, 4);
+    assert.equal(response.model, "hopper-4b-v1.1");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("Hopper maps noul to P(true) with the rubric in the policy and score to the expected level", async () => {
+  const userTurns: string[] = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const url = String(input);
+    if (url.endsWith("/apply-template")) {
+      userTurns.push(JSON.parse(String(init?.body)).messages[1].content);
+      return jsonResponse({ prompt: "<|im_start|>rendered" });
+    }
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -0.2 }, { token: "B", logprob: -1.6 }]
+      }]
+    });
+  };
+  const restoreEnv = setEnv({ HOPPER_TEMPERATURE: "1" });
+  try {
+    const response = await callJev("hopper", "http://127.0.0.1:9", {
+      state: "s",
+      questions: {
+        ready: { type: "noul", instructions: "Ready?" },
+        depth: { type: "score", instructions: "Rate.", criteria: ["Low", "High"] }
+      },
+      model: "hopper-4b-v1.1",
+      fetch: fetchImpl
+    });
+    const readyUser = JSON.parse(userTurns[0]);
+    assert.match(readyUser.criterion, /true: yes\nfalse: no\n\nReady\?/);
+    assert.deepEqual(readyUser.options, [
+      { letter: "A", description: "true" },
+      { letter: "B", description: "false" }
+    ]);
+    const ready = response.answers.ready as any;
+    assert.equal(ready.type, "noul");
+    // e^1.4 / (e^1.4 + 1) ~ 0.80 at temperature 1 — A (true) dominates
+    assert.ok(ready.noul > 0.7 && ready.noul < 0.9, "noul = P(true)");
+    const depthUser = JSON.parse(userTurns[1]);
+    assert.deepEqual(depthUser.options, [
+      { letter: "A", description: "0: Low" },
+      { letter: "B", description: "1: High" }
+    ]);
+    const depth = response.answers.depth as any;
+    // EV over levels [0,1] with p(0) ~ 0.80 sits between the levels, closer to 0.
+    assert.ok(depth.score > 0 && depth.score < 0.5, "score is the expected level");
+    assert.ok(depth.probabilities["0"] > depth.probabilities["1"]);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("JevClient works against the local Hopper platform without an API key", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "hopper" });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input) => {
+    const url = String(input);
+    if (url.endsWith("/apply-template")) return jsonResponse({ prompt: "p" });
+    if (url.endsWith("/tokenize")) return jsonResponse({ tokens: [1, 2] });
+    return jsonResponse({
+      completion_probabilities: [{
+        top_logprobs: [{ token: "A", logprob: -0.05 }, { token: "B", logprob: -3.0 }]
+      }]
+    });
+  }) as typeof fetch;
+  try {
+    const client = new JevClient();
+    assert.equal(client.isConfigured(), true, "local Hopper needs no API key");
+    assert.match(client.getKeyOrigin() ?? "", /default/);
+    const result = await client.evaluate({
+      state: "The package arrived.",
+      questions: { delivered: { type: "noul", instructions: "Was the package delivered?" } }
+    });
+    assert.equal(result.answers.delivered.type, "noul");
+    assert.ok(Number(result.answers.delivered.value) > 0.5);
+    assert.equal(result.model, "hopper-4b-v1.1");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});
+
+test("Hopper rejects choice questions with more options than letters", async () => {
+  const fetchImpl: typeof fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("/apply-template")) return jsonResponse({ prompt: "p" });
+    return jsonResponse({ answers: {} });
+  };
+  const criteria = Object.fromEntries(
+    Array.from({ length: 27 }, (_, i) => [`opt${i}`, `Option ${i}`])
+  );
+  await assert.rejects(
+    callJev("hopper", "http://127.0.0.1:9", {
+      state: "s",
+      questions: { pick: { type: "choice", instructions: "Pick.", criteria } },
+      model: "hopper-4b-v1.1",
+      fetch: fetchImpl,
+    }),
+    /only 26 answer letters/
+  );
+});

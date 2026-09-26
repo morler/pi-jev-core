@@ -62,6 +62,19 @@ Each question runs one forward pass: the prompt is tokenized server-side, the an
 
 Each scoring row is one forward pass: the row is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at the row type's temperature — the decider-ai reference recipe. Serve the repo's `decider-4b-q6_k.gguf` with llama-server.
 
+## Local Hopper platform (llama-server)
+
+`JEV_PLATFORM=hopper` routes evaluations to a local llama-server serving a Hopper GGUF (hopper-4b v1.1, the Qwen3.5-4B LoRA merged in). It renders hopper's reference prompt — the fixed system instruction plus one JSON user turn (`evidence`/`criterion`/`options`) — through the GGUF's own chat template (`/apply-template`, thinking off) and calibrates with the per-kind temperatures from `hopper.json` (choice 0.790, noul 0.753, score 0.900); `HOPPER_TEMPERATURE` overrides the map with one temperature.
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | Set to `hopper` for the local model. |
+| `HOPPER_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
+| `HOPPER_TEMPERATURE` | per-kind map | One temperature for every kind, switching the map off. |
+| `JEV_MODEL` | `hopper-4b-v1.1` | Model label reported with the answers. |
+
+Each question is one forward pass: the rendered prompt is applied and tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at the question kind's temperature — the hopper_decisions reference recipe. Score levels ride as named options in that same pass, and the expectation of the level distribution is the score; more than 26 options is rejected. Serve the merged `Hopper-4B` GGUF with llama-server.
+
 ## The `jev_evaluate` tool
 
 The tool sends a `state` plus multiple named questions to the active Jev platform and returns answers, the model, usage, elapsed time, and each provider's raw answer. Question types:
