@@ -38,7 +38,7 @@ Keep `state` as a string or JSON object, `noul` without criteria, `choice` with 
 Treat `value` and `confidence` as optional. Missing answers must use an explicit fallback path and must not be coerced into a meaningful value such as zero. Use `noulProbability(raw)` when code must distinguish no answer from an answer of zero.
 
 # Logging privacy and behavior
-The `/jev log on|off` switch controls best-effort JSONL logging of Jev questions and answers. Keep log and state paths configurable through their environment variables, use the documented per-user defaults, and never log credentials. Logging failures must not break evaluation or command handling.
+The `/jev-platform log on|off` switch controls best-effort JSONL logging of Jev questions and answers. Keep log and state paths configurable through their environment variables, use the documented per-user defaults, and never log credentials. Logging failures must not break evaluation or command handling.
 
 # building-with-jev skill
 Preserve `skills/building-with-jev/SKILL.md` and its documented adaptations: use `JevClient.evaluate` or `jev_evaluate`, read answers through `.value` and `.distribution`, pass string instructions, do not pass Noul criteria through, and guard optional fields. Keep the skill installation instructions and upstream attribution accurate.
