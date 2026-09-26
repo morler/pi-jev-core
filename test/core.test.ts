@@ -372,6 +372,20 @@ test("/jev-platform lists, validates, and switches platforms", async () => {
     assert.equal(process.env.JEV_PLATFORM, "jevk5", "an unknown name must not switch");
     assert.equal(notifications.at(-1)![1], "warning");
     assert.match(notifications.at(-1)![0], /Unknown platform/);
+
+    const logDir = fs.mkdtempSync(os.tmpdir() + "/jev-log-command-");
+    const restoreLogEnv = setEnv({ JEV_LOG_STATE_FILE: logDir + "/state" });
+    try {
+      await command.handler("log on", ctx);
+      assert.equal(fs.readFileSync(logDir + "/state", "utf8").trim(), "on");
+      assert.match(notifications.at(-1)![0], /enabled/);
+      await command.handler("log off", ctx);
+      assert.equal(fs.readFileSync(logDir + "/state", "utf8").trim(), "off");
+      assert.match(notifications.at(-1)![0], /disabled/);
+    } finally {
+      restoreLogEnv();
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
   } finally {
     restoreEnv();
   }

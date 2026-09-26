@@ -69,24 +69,20 @@ export default function (pi: ExtensionAPI): void {
     }
   });
 
-  pi.registerCommand("jev", {
-    description: "Jev commands: /jev log on|off",
-    handler: async (args, ctx) => {
-      const [command, value] = args.trim().toLowerCase().split(/\s+/, 2);
-      if (command !== "log" || !["on", "off"].includes(value ?? "")) {
-        ctx.ui.notify(`Usage: /jev log on|off (currently ${isJevLoggingEnabled() ? "on" : "off"})`, "warning");
-        return;
-      }
-      const enabled = value === "on";
-      setJevLoggingEnabled(enabled);
-      ctx.ui.notify(`Jev logging ${enabled ? "enabled" : "disabled"}`, "info");
-    }
-  });
-
   pi.registerCommand("jev-platform", {
     description: "List or switch the active Jev platform (/jev-platform [name])",
     handler: async (args, ctx) => {
-      const requested = args?.trim().toLowerCase();
+      const [requested, logState] = args?.trim().toLowerCase().split(/\s+/, 2) ?? [];
+      if (requested === "log") {
+        if (!["on", "off"].includes(logState ?? "")) {
+          ctx.ui.notify(`Usage: /jev-platform log on|off (currently ${isJevLoggingEnabled() ? "on" : "off"})`, "warning");
+          return;
+        }
+        const enabled = logState === "on";
+        setJevLoggingEnabled(enabled);
+        ctx.ui.notify(`Jev logging ${enabled ? "enabled" : "disabled"}`, "info");
+        return;
+      }
       if (!requested) {
         const lines = Object.keys(JEV_PLATFORMS).map((name) => {
           const marker = name === jev.platform ? "*" : " ";
