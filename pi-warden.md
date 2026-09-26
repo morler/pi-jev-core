@@ -20,7 +20,7 @@ Project type: TypeScript. Package name: `pi-jev-core`. This is a minimal, standa
 The package ships pure TypeScript source loaded by Pi's extension loader. Keep the public package and exports aligned with `package.json`; preserve the programmatic entry point and supported deep imports. Do not add tool routing, auto mode, skill discovery, or context compaction.
 
 # Platform credentials and configuration
-TypeSafe is the default platform. Platform credentials come from the documented environment variables or Pi secret files under `~/.pi/agent/secrets/`; never commit or send API keys to the model. Preserve support for `JEV_PLATFORM`, `JEV_MODEL`, platform-specific credentials, Cloudflare account and gateway configuration, and the persisted platform selection via `JEV_PLATFORM_FILE`. Environment configuration takes precedence over persisted configuration.
+TypeSafe is the default platform. Platform credentials come from the documented environment variables or Pi secret files under `~/.pi/agent/secrets/`; never commit or send API keys to the model. Preserve support for `JEV_PLATFORM`, `JEV_MODEL`, platform-specific credentials, Cloudflare account and gateway configuration, and the persisted platform selection in `~/.pi/agent/pi-jev-core.json` (path overridable via `JEV_CONFIG_FILE`). Environment configuration takes precedence over persisted configuration.
 
 # Local JevK5 platform
 When `JEV_PLATFORM=jevk5`, route to the local llama-server using `JEVK5_BASE_URL`, `JEVK5_TEMP`, and `JEV_MODEL`. Preserve the reference recipe: tokenize server-side, read answer-letter logprobs from `n_probs`, and softmax them at the calibration temperature. This mode must not require an API key or egress.

@@ -373,18 +373,18 @@ test("/jev-platform lists, validates, and switches platforms", async () => {
     assert.equal(notifications.at(-1)![1], "warning");
     assert.match(notifications.at(-1)![0], /Unknown platform/);
 
-    const logDir = fs.mkdtempSync(os.tmpdir() + "/jev-log-command-");
-    const restoreLogEnv = setEnv({ JEV_LOG_STATE_FILE: logDir + "/state" });
+    const configDir = fs.mkdtempSync(os.tmpdir() + "/jev-config-");
+    const restoreConfigEnv = setEnv({ JEV_CONFIG_FILE: configDir + "/pi-jev-core.json" });
     try {
       await command.handler("log on", ctx);
-      assert.equal(fs.readFileSync(logDir + "/state", "utf8").trim(), "on");
+      assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, true);
       assert.match(notifications.at(-1)![0], /enabled/);
       await command.handler("log off", ctx);
-      assert.equal(fs.readFileSync(logDir + "/state", "utf8").trim(), "off");
+      assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, false);
       assert.match(notifications.at(-1)![0], /disabled/);
     } finally {
-      restoreLogEnv();
-      fs.rmSync(logDir, { recursive: true, force: true });
+      restoreConfigEnv();
+      fs.rmSync(configDir, { recursive: true, force: true });
     }
   } finally {
     restoreEnv();

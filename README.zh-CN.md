@@ -33,7 +33,7 @@ pi install npm:pi-jev-core
 
 Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可用 `JEV_MODEL` 覆盖模型；TypeSafe 平台另支持 `TYPESAFE_DEFAULT_MODEL`。不要把 API key 写入仓库或发送给模型。
 
-运行时用 `/jev-platform` 命令切换激活平台：不带参数列出全部平台及其凭据来源，并标记当前通道；`/jev-platform <name>` 切换并把选择持久化到 `~/.pi/agent/jev-platform`（路径可用 `JEV_PLATFORM_FILE` 覆写）。解析顺序：`JEV_PLATFORM` 环境变量 > 持久化选择 > `typesafe`。
+运行时用 `/jev-platform` 命令切换激活平台：不带参数列出全部平台及其凭据来源，并标记当前通道；`/jev-platform <name>` 切换并把选择持久化到 `~/.pi/agent/pi-jev-core.json`（路径可用 `JEV_CONFIG_FILE` 覆写）。日志开关 `/jev-platform log on|off` 也保存到同一个 JSON 文件。解析顺序：`JEV_PLATFORM` 环境变量 > JSON 持久化选择 > `typesafe`；环境变量优先于持久化配置。
 
 ## 本地 JevK5 平台（llama-server）
 

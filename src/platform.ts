@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
 import { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
+import { readConfig, updateConfig } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
 export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider";
@@ -33,22 +34,24 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
 
 /** Where /jev-platform persists the choice for future sessions. */
 export function platformStorePath(): string {
-  return process.env.JEV_PLATFORM_FILE?.trim() || path.join(os.homedir(), ".pi", "agent", "jev-platform");
+  return process.env.JEV_PLATFORM_FILE?.trim() || path.join(os.homedir(), ".pi", "agent", "pi-jev-core.json");
 }
 
 export function readPersistedPlatform(): JevPlatform | null {
-  try {
-    const raw = fs.readFileSync(platformStorePath(), "utf8").trim().toLowerCase();
-    return raw && raw in JEV_PLATFORMS ? (raw as JevPlatform) : null;
-  } catch {
-    return null;
-  }
+  const raw = process.env.JEV_PLATFORM_FILE?.trim()
+    ? (() => { try { return fs.readFileSync(platformStorePath(), "utf8").trim().toLowerCase(); } catch { return ""; } })()
+    : readConfig().platform?.trim().toLowerCase() ?? "";
+  return raw && raw in JEV_PLATFORMS ? (raw as JevPlatform) : null;
 }
 
 export function persistPlatform(platform: JevPlatform): void {
-  const store = platformStorePath();
-  fs.mkdirSync(path.dirname(store), { recursive: true });
-  fs.writeFileSync(store, platform + "\n");
+  if (process.env.JEV_PLATFORM_FILE?.trim()) {
+    const store = platformStorePath();
+    fs.mkdirSync(path.dirname(store), { recursive: true });
+    fs.writeFileSync(store, platform + "\n");
+    return;
+  }
+  updateConfig({ platform });
 }
 
 /** Active platform: JEV_PLATFORM wins, then the persisted /jev-platform choice, then TypeSafe. */
