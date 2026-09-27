@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { JevClient } from "../src/jev.js";
 import type { JevEvaluationRequest } from "../src/types.js";
 import { JEV_PLATFORMS, persistPlatform, platformStorePath, resolveCredential, resolveModel, type JevPlatform } from "../src/platform.js";
-import { appendJevLog, isJevLoggingEnabled, setJevLoggingEnabled } from "../src/log.js";
+import { isJevLoggingEnabled, setJevLoggingEnabled } from "../src/log.js";
 
 const questionSchema = Type.Union([
   Type.Object({
@@ -55,17 +55,11 @@ export default function (pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, signal) {
       const request = params as JevEvaluationRequest;
-      try {
-        const response = await jev.evaluate(request, signal);
-        appendJevLog({ type: "evaluation", request, response });
-        return {
-          content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
-          details: response
-        };
-      } catch (error) {
-        appendJevLog({ type: "evaluation", request, error: error instanceof Error ? error.message : String(error) });
-        throw error;
-      }
+      const response = await jev.evaluate(request, signal);
+      return {
+        content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
+        details: response
+      };
     }
   });
 

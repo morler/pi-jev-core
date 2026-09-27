@@ -7,6 +7,7 @@ import {
   resolvePlatform,
   type JevPlatform,
 } from "./platform.js";
+import { appendJevLog } from "./log.js";
 import type {
   JevEvaluationRequest,
   JevEvaluationResponse,
@@ -68,9 +69,11 @@ export class JevClient {
     const startTime = Date.now();
     const apiKey = resolveCredential(this.platform)?.key;
     if (!apiKey) {
-      throw new Error(
+      const err = new Error(
         `Missing Jev API key for the ${this.platform} platform. ${credentialHint(this.platform)}.`
       );
+      appendJevLog({ type: "evaluation", request, error: err.message });
+      throw err;
     }
 
     const questions: Record<string, unknown> = {};
@@ -139,14 +142,17 @@ export class JevClient {
         }
       }
 
-      return {
+      const result = {
         answers,
         model: response.model || model,
         usage: response.usage,
         elapsedMs,
       };
+      appendJevLog({ type: "evaluation", request, response: result });
+      return result;
     } catch (err) {
       this.stats.lastError = err instanceof Error ? err.message : String(err);
+      appendJevLog({ type: "evaluation", request, error: err instanceof Error ? err.message : String(err) });
       throw err;
     }
   }
