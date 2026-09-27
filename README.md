@@ -75,6 +75,19 @@ Each scoring row is one forward pass: the row is tokenized server-side, the answ
 
 Each question is one forward pass: the rendered prompt is applied and tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at the question kind's temperature — the hopper_decisions reference recipe. Score levels ride as named options in that same pass, and the expectation of the level distribution is the score; more than 26 options is rejected. Serve the merged `Hopper-4B` GGUF with llama-server.
 
+## Local Intern-Decision platform (llama-server)
+
+`JEV_PLATFORM=intern-decision` routes evaluations to the Intern-Decision model served by llama-server. The default URL is `http://127.0.0.1:8008`, matching the currently running Intern-Decision-4B service.
+
+| Environment variable | Default | Meaning |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | Set to `intern-decision`. |
+| `INTERN_DECISION_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
+| `INTERN_DECISION_TEMPERATURE` | `1.99241824` | Positive finite candidate-probability calibration temperature. |
+| `JEV_MODEL` | `Intern-Decision-4B` | Model label reported with answers. |
+
+The adapter follows Intern-Decision's JSON decision skeleton and reads candidate-symbol logprobs with `temperature: 0` (not sampling). It applies `softmax(log(p) / T)` to the candidate probabilities, preserving the argmax while updating confidence, noul probability, and expected score. The default T was fitted on separate calibration and validation splits; set `INTERN_DECISION_TEMPERATURE=1` for uncalibrated probabilities. Custom values must be finite and positive.
+
 ## The `jev_evaluate` tool
 
 The tool sends a `state` plus multiple named questions to the active Jev platform and returns answers, the model, usage, elapsed time, and each provider's raw answer. Question types:

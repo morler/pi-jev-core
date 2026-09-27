@@ -1,6 +1,7 @@
 export { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
 export { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
 export { callHopper, HOPPER_DEFAULT_URL } from "./hopper.js";
+export { callInternDecision, internDecisionBaseUrl, INTERN_DECISION_DEFAULT_URL, INTERN_DECISION_DEFAULT_TEMPERATURE } from "./intern-decision.js";
 export { JevClient, noulProbability } from "./jev.js";
 export {
   callJev,

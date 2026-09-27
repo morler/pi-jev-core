@@ -5,10 +5,11 @@ import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
 import { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
 import { callHopper, HOPPER_DEFAULT_URL } from "./hopper.js";
+import { callInternDecision, INTERN_DECISION_DEFAULT_URL } from "./intern-decision.js";
 import { readConfig, updateConfig } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider" | "hopper";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider" | "hopper" | "intern-decision";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -32,6 +33,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
   decider: { env: "DECIDER_BASE_URL", secret: "decider_base_url", model: "decider-4b-v2.1" },
   hopper: { env: "HOPPER_BASE_URL", secret: "hopper_base_url", model: "hopper-4b-v1.1" },
+  "intern-decision": { env: "INTERN_DECISION_BASE_URL", secret: "intern_decision_base_url", model: "Intern-Decision-4B" },
 };
 
 /** Where /jev-platform persists the choice for future sessions. */
@@ -85,6 +87,10 @@ export function resolveCredential(platform: JevPlatform = resolvePlatform()): Cr
       source: "env",
       origin: url ? "$JEVK5_BASE_URL" : `built-in default (${JEVK5_DEFAULT_URL})`,
     };
+  }
+  if (platform === "intern-decision") {
+    const url = process.env.INTERN_DECISION_BASE_URL?.trim();
+    return { key: url || INTERN_DECISION_DEFAULT_URL, source: "env", origin: url ? "$INTERN_DECISION_BASE_URL" : `built-in default (${INTERN_DECISION_DEFAULT_URL})` };
   }
   if (platform === "decider") {
     // Local llama-server needs no API key; the credential carries the server base URL.
@@ -165,6 +171,8 @@ export async function callJev(
   if (platform === "hopper") {
     return callHopper(apiKey, call, doFetch);
   }
+
+  if (platform === "intern-decision") return callInternDecision(apiKey, call, doFetch);
 
   if (platform === "typesafe") {
     const client = new TypeSafeClient({ apiKey, fetch: doFetch });

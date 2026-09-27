@@ -61,6 +61,19 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
 
 每个评分行只跑一次前向推理：该行由服务端分词，答案字母的 logprob 经 `n_probs` 返回，再按该行类型的温度做 softmax——即 decider-ai 官方配方。用 llama-server 加载模型仓库的 `decider-4b-q6_k.gguf` 即可。
 
+## 本地 Intern-Decision 平台（llama-server）
+
+`JEV_PLATFORM=intern-decision` 将请求路由到 llama-server 上运行的 Intern-Decision 模型。默认地址是当前服务使用的 `http://127.0.0.1:8008`，默认模型标签为 `Intern-Decision-4B`。
+
+| 环境变量 | 默认值 | 含义 |
+|---|---|---|
+| `JEV_PLATFORM` | `typesafe` | 设为 `intern-decision`。 |
+| `INTERN_DECISION_BASE_URL` | `http://127.0.0.1:8008` | llama-server 基础地址。 |
+| `INTERN_DECISION_TEMPERATURE` | `1.99241824` | 必须为有限正数的候选概率校准温度。 |
+| `JEV_MODEL` | `Intern-Decision-4B` | 随答案返回的模型标签。 |
+
+适配器遵循 Intern-Decision 的 JSON decision skeleton，并以 `temperature: 0` 读取候选符号 logits（这不是采样温度），再按 `softmax(log(p) / T)` 校准候选概率。校准保持 argmax 不变，但会更新 confidence、noul 概率和 score 期望值；默认温度是在独立校准集/验证集上拟合的。设置 `INTERN_DECISION_TEMPERATURE=1` 可使用未校准概率，自定义值必须有限且大于 0。
+
 ## `jev_evaluate` 工具
 
 工具把 `state` 和多个命名问题发送到当前 Jev 平台，返回答案、模型、用量、耗时和 provider 原始答案。问题说明：
