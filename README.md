@@ -106,11 +106,11 @@ Example request:
   "questions": {
     "breaking": {
       "type": "noul",
-      "instructions": "Does this change break an existing caller?"
+      "instructions": "Does `change` break an existing caller?"
     },
     "kind": {
       "type": "choice",
-      "instructions": "What best describes the change?",
+      "instructions": "What best describes `change`?",
       "criteria": {
         "api": "Public API change",
         "bug": "Bug fix",
@@ -119,14 +119,14 @@ Example request:
     },
     "severity": {
       "type": "score",
-      "instructions": "Rate the impact of this change",
+      "instructions": "Rate the impact of `change`",
       "criteria": ["Critical", "High", "Medium", "Low"]
     }
   }
 }
 ```
 
-`state` may be a string or a JSON object; one request can carry multiple independent questions. `noul` needs no `criteria`. Whatever you pass as `state` is transmitted to the configured platform — submit only what the judgment needs.
+`state` may be a string or a JSON object. For object state, each question must reference the fields it needs with backticks, such as `` `change` ``; missing or unsafe paths are rejected. String state is sent as the `text` field for compatibility. One request can carry multiple independent questions. `noul` needs no `criteria`. Only referenced object fields are transmitted to the configured platform.
 
 ## Skill: building-with-jev
 

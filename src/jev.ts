@@ -45,6 +45,57 @@ interface RawAnswer {
   probabilities?: Record<string, number>;
 }
 
+/** Send only state fields explicitly referenced by question instructions. No summarization is performed. */
+const DANGEROUS_PATH_PARTS = new Set(["__proto__", "constructor", "prototype"]);
+
+function referencedPaths(instructions: string): (string | number)[][] {
+  const paths: (string | number)[][] = [];
+  for (const match of instructions.matchAll(/`([^`]+)`/g)) {
+    const parts = match[1]!.match(/[^.[\]]+|\[(\d+)\]/g)?.map((part) =>
+      part.startsWith("[") ? Number(part.slice(1, -1)) : part
+    );
+    if (!parts?.length || parts.some((part) => typeof part === "string" && DANGEROUS_PATH_PARTS.has(part))) {
+      throw new Error("State references must use safe property paths.");
+    }
+    paths.push(parts);
+  }
+  if (paths.length === 0) throw new Error("Every Jev question must explicitly reference state fields with backticks.");
+  return paths;
+}
+
+/** Send only state fields explicitly referenced by question instructions. No summarization is performed. */
+export function selectReferencedState(
+  state: Record<string, unknown>,
+  questions: Record<string, { instructions: string }>
+): Record<string, unknown> {
+  const selected: Record<string, unknown> = {};
+  for (const question of Object.values(questions)) {
+    for (const parts of referencedPaths(question.instructions)) {
+      let source: unknown = state;
+      for (const part of parts) {
+        if (source === null || typeof source !== "object" || !Object.hasOwn(source, part)) {
+          throw new Error(`State reference is missing: ${parts.join(".")}`);
+        }
+        source = (source as Record<string | number, unknown>)[part];
+      }
+
+      let target: Record<string | number, unknown> = selected;
+      parts.forEach((part, index) => {
+        if (index === parts.length - 1) {
+          target[part] = source;
+          return;
+        }
+        const next = parts[index + 1]!;
+        if (!Object.hasOwn(target, part)) {
+          target[part] = typeof next === "number" ? [] : {};
+        }
+        target = target[part] as Record<string | number, unknown>;
+      });
+    }
+  }
+  return selected;
+}
+
 export class JevClient {
   /** Platform this client talks to, fixed for the process lifetime. */
   public readonly platform: JevPlatform = resolvePlatform();
@@ -96,8 +147,9 @@ export class JevClient {
       }
     }
 
-    const state: unknown =
-      typeof request.state === "string" ? { text: request.state } : request.state;
+    const state = typeof request.state === "string"
+      ? { text: request.state }
+      : selectReferencedState(request.state, request.questions);
     const model = resolveModel(this.platform, request.model);
 
     try {

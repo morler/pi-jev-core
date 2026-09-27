@@ -92,11 +92,11 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
   "questions": {
     "breaking": {
       "type": "noul",
-      "instructions": "Does this change break an existing caller?"
+      "instructions": "Does `change` break an existing caller?"
     },
     "kind": {
       "type": "choice",
-      "instructions": "What best describes the change?",
+      "instructions": "What best describes `change`?",
       "criteria": {
         "api": "Public API change",
         "bug": "Bug fix",
@@ -105,14 +105,14 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
     },
     "severity": {
       "type": "score",
-      "instructions": "Rate the impact of this change",
+      "instructions": "Rate the impact of `change`",
       "criteria": ["Critical", "High", "Medium", "Low"]
     }
   }
 }
 ```
 
-`state` 可以是字符串或 JSON 对象；一次请求可包含多个独立问题。`noul` 不需要 `criteria`。传入 `state` 的内容会发送到配置的平台，仅提交完成判断所需的信息。
+`state` 可以是字符串或 JSON 对象。对于对象 state，每个问题都必须用反引号引用所需字段，例如 `` `change` ``；缺失或不安全的路径会被拒绝。为兼容旧调用，字符串 state 会作为 `text` 字段发送。一次请求可包含多个独立问题。`noul` 不需要 `criteria`。对象 state 只有被引用的字段会发送到配置的平台。
 
 ## 技能：building-with-jev
 

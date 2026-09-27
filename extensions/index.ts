@@ -45,8 +45,8 @@ export default function (pi: ExtensionAPI): void {
     parameters: Type.Object({
       state: Type.Union([
         Type.String(),
-        Type.Record(Type.String(), Type.Any())
-      ], { description: "Text or structured JSON to evaluate." }),
+        Type.Record(Type.String(), Type.Unknown())
+      ], { description: "Text or JSON object; object fields referenced by questions are selected before transmission." }),
       questions: Type.Record(Type.String(), questionSchema, {
         minProperties: 1,
         description: "Named, independent Jev questions."

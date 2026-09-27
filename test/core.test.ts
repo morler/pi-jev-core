@@ -3,7 +3,7 @@ import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.js";
 import { callJev, resolvePlatform } from "../src/platform.js";
-import { JevClient } from "../src/jev.js";
+import { JevClient, selectReferencedState } from "../src/jev.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
@@ -20,6 +20,43 @@ function setEnv(patch: Record<string, string | undefined>): () => void {
     }
   };
 }
+
+test("selectReferencedState sends only referenced fields without summarizing", () => {
+  assert.deepEqual(
+    selectReferencedState(
+      { ticket: { title: "Bug", messages: [{ text: "broken" }] }, secret: "omit" },
+      { one: { instructions: "Read `ticket.title`", }, two: { instructions: "Read `ticket.messages[0].text`" } }
+    ),
+    { ticket: { title: "Bug", messages: [{ text: "broken" }] } }
+  );
+});
+
+test("selectReferencedState rejects prototype-pollution paths", () => {
+  const polluted = Object.prototype as { polluted?: unknown; x?: unknown };
+  delete polluted.polluted;
+  delete polluted.x;
+  assert.throws(() => selectReferencedState(
+    JSON.parse('{"__proto__":{"polluted":5}}'),
+    { q: { instructions: "Read `__proto__.polluted`" } }
+  ));
+  assert.throws(() => selectReferencedState(
+    { a: { constructor: { prototype: { x: 1 } } } },
+    { q: { instructions: "Read `a.constructor.prototype.x`" } }
+  ));
+  assert.equal(polluted.polluted, undefined);
+  assert.equal(polluted.x, undefined);
+});
+
+ test("missing or unreferenced question state fails before network", () => {
+  assert.throws(() => selectReferencedState(
+    { change: "ok" },
+    { q: { instructions: "Read `missing`" } }
+  ));
+  assert.throws(() => selectReferencedState(
+    { change: "ok" },
+    { q: { instructions: "Make a decision" } }
+  ));
+});
 
 function jsonResponse(value: unknown): Response {
   return new Response(JSON.stringify(value), {
@@ -58,15 +95,15 @@ test("jev_evaluate sends and normalizes all three question types", async () => {
     const result = await tool.execute("test-call", {
       state: { change: "Added a required field." },
       questions: {
-        breaking: { type: "noul", instructions: "Does this break existing callers?" },
+        breaking: { type: "noul", instructions: "Does `change` break existing callers?" },
         kind: {
           type: "choice",
-          instructions: "Classify the change.",
+          instructions: "Classify `change`.",
           criteria: { api: "Public API change", other: "Other" }
         },
         severity: {
           type: "score",
-          instructions: "Rate impact.",
+          instructions: "Rate the impact of `change`.",
           criteria: ["Critical", "High", "Low"]
         }
       }
@@ -315,8 +352,8 @@ test("JevClient works against the local JevK5 platform without an API key", asyn
     assert.equal(client.isConfigured(), true, "local JevK5 needs no API key");
     assert.match(client.getKeyOrigin() ?? "", /default/);
     const result = await client.evaluate({
-      state: "The package arrived.",
-      questions: { delivered: { type: "noul", instructions: "Was the package delivered?" } }
+      state: { text: "The package arrived." },
+      questions: { delivered: { type: "noul", instructions: "Was `text` delivered?" } }
     });
     assert.equal(result.answers.delivered.type, "noul");
     assert.ok(Number(result.answers.delivered.value) > 0.5);
@@ -540,8 +577,8 @@ test("JevClient works against the local Decider platform without an API key", as
     assert.equal(client.isConfigured(), true, "local Decider needs no API key");
     assert.match(client.getKeyOrigin() ?? "", /default/);
     const result = await client.evaluate({
-      state: "The package arrived.",
-      questions: { delivered: { type: "noul", instructions: "Was the package delivered?" } }
+      state: { text: "The package arrived." },
+      questions: { delivered: { type: "noul", instructions: "Was `text` delivered?" } }
     });
     assert.equal(result.answers.delivered.type, "noul");
     assert.ok(Number(result.answers.delivered.value) > 0.9);
@@ -703,8 +740,8 @@ test("JevClient works against the local Hopper platform without an API key", asy
     assert.equal(client.isConfigured(), true, "local Hopper needs no API key");
     assert.match(client.getKeyOrigin() ?? "", /default/);
     const result = await client.evaluate({
-      state: "The package arrived.",
-      questions: { delivered: { type: "noul", instructions: "Was the package delivered?" } }
+      state: { text: "The package arrived." },
+      questions: { delivered: { type: "noul", instructions: "Was `text` delivered?" } }
     });
     assert.equal(result.answers.delivered.type, "noul");
     assert.ok(Number(result.answers.delivered.value) > 0.5);
