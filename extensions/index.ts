@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import { JevClient } from "../src/jev.js";
 import type { JevEvaluationRequest } from "../src/types.js";
 import { JEV_PLATFORMS, persistPlatform, platformStorePath, resolveCredential, resolveModel, type JevPlatform } from "../src/platform.js";
+import { updateConfig } from "../src/config.js";
 import { isJevLoggingEnabled, setJevLoggingEnabled } from "../src/log.js";
 
 const questionSchema = Type.Union([
@@ -64,7 +65,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("jev-platform", {
-    description: "List or switch the active Jev platform (/jev-platform [name])",
+    description: "List or switch the active Jev platform (/jev-platform [name] | local <port>)",
     handler: async (args, ctx) => {
       const [requested, logState] = args?.trim().toLowerCase().split(/\s+/, 2) ?? [];
       if (requested === "log") {
@@ -89,6 +90,21 @@ export default function (pi: ExtensionAPI): void {
       if (!(requested in JEV_PLATFORMS)) {
         ctx.ui.notify(`Unknown platform "${requested}". Available: ${Object.keys(JEV_PLATFORMS).join(", ")}`, "warning");
         return;
+      }
+      if (requested === "local") {
+        const portInput = logState;
+        if (portInput) {
+          const port = Number(portInput);
+          if (!Number.isInteger(port) || port < 1 || port > 65535) {
+            ctx.ui.notify("Usage: /jev-platform local <port 1-65535>", "warning");
+            return;
+          }
+          process.env.JEV_LOCAL_PORT = String(port);
+          if (!(process.env.JEV_PLATFORM_FILE ?? "").trim()) updateConfig({ localPort: port });
+        } else if (!resolveCredential("local")) {
+          ctx.ui.notify("Usage: /jev-platform local <port 1-65535>", "warning");
+          return;
+        }
       }
       process.env.JEV_PLATFORM = requested;
       persistPlatform(requested as JevPlatform);

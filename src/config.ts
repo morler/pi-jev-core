@@ -4,6 +4,7 @@ import * as path from "node:path";
 
 export interface JevConfig {
   platform?: string;
+  localPort?: number;
   logging?: boolean;
 }
 

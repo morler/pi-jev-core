@@ -30,10 +30,13 @@ pi install npm:pi-jev-core
 | `openrouter` | `OPENROUTER_API_KEY` | `openrouter_api_key` | `typesafe/jev-1.13` |
 | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `cloudflare_api_token` | `typesafe/jev` |
 | `vercel` | `AI_GATEWAY_API_KEY` | `ai_gateway_api_key` | `typesafe-ai/jev` |
+| `local` | `JEV_LOCAL_PORT`（端口，无需 API key） | — | `jev-latest` |
 
 Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可用 `JEV_MODEL` 覆盖模型；TypeSafe 平台另支持 `TYPESAFE_DEFAULT_MODEL`。不要把 API key 写入仓库或发送给模型。
+`local` 平台连接本机 Jev API 服务：用 `/jev-platform local <端口>`（在同一配置文件里持久化为 `localPort`）或 `JEV_LOCAL_PORT` 设置端口。它向 `http://127.0.0.1:<端口>/v1/systemone` POST `{model, state, questions}`，期望返回 `{answers, model?, usage?}`；无需 API key。
 
-运行时用 `/jev-platform` 命令切换激活平台：不带参数列出全部平台及其凭据来源，并标记当前通道；`/jev-platform <name>` 切换并把选择持久化到 `~/.pi/agent/pi-jev-core.json`（路径可用 `JEV_CONFIG_FILE` 覆写）。日志开关 `/jev-platform log on|off` 也保存到同一个 JSON 文件。解析顺序：`JEV_PLATFORM` 环境变量 > JSON 持久化选择 > `typesafe`；环境变量优先于持久化配置。
+
+运行时用 `/jev-platform` 命令切换激活平台：不带参数列出全部平台及其凭据来源，并标记当前通道；`/jev-platform <name>` 切换并把选择持久化（`local` 平台用 `/jev-platform local <端口>` 同时设置端口）到 `~/.pi/agent/pi-jev-core.json`（路径可用 `JEV_CONFIG_FILE` 覆写）。日志开关 `/jev-platform log on|off` 也保存到同一个 JSON 文件。解析顺序：`JEV_PLATFORM` 环境变量 > JSON 持久化选择 > `typesafe`；环境变量优先于持久化配置。
 
 ## `jev_evaluate` 工具
 

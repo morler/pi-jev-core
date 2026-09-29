@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
-import { readConfig, updateConfig } from "./config.js";
+import { configPath, readConfig, updateConfig } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "local";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -24,6 +24,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   openrouter: { env: "OPENROUTER_API_KEY", secret: "openrouter_api_key", model: "typesafe/jev-1.13" },
   cloudflare: { env: "CLOUDFLARE_API_TOKEN", secret: "cloudflare_api_token", model: "typesafe/jev" },
   vercel: { env: "AI_GATEWAY_API_KEY", secret: "ai_gateway_api_key", model: "typesafe-ai/jev" },
+  local: { env: "JEV_LOCAL_PORT", secret: "local_jev_port", model: "jev-latest" },
 };
 
 /** Where /jev-platform persists the choice for future sessions. */
@@ -67,9 +68,22 @@ export interface Credential {
   origin: string;
 }
 
+function isPort(value: string): boolean {
+  return /^[0-9]+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535;
+}
+
 /** API credential from the platform's environment variable, then its Pi secret file. */
 export function resolveCredential(platform: JevPlatform = resolvePlatform()): Credential | null {
   const spec = JEV_PLATFORMS[platform];
+  if (platform === "local") {
+    const envPort = process.env.JEV_LOCAL_PORT?.trim();
+    if (envPort && isPort(envPort)) return { key: envPort, source: "env", origin: "$JEV_LOCAL_PORT" };
+    const configPort = readConfig().localPort;
+    if (configPort !== undefined && isPort(String(configPort))) {
+      return { key: String(configPort), source: "file", origin: configPath() };
+    }
+    return null;
+  }
 
   const envKey = process.env[spec.env]?.trim();
   if (envKey) return { key: envKey, source: "env", origin: `$${spec.env}` };
@@ -90,6 +104,7 @@ export function resolveCredential(platform: JevPlatform = resolvePlatform()): Cr
 /** How to fix a missing credential, for error messages and status output. */
 export function credentialHint(platform: JevPlatform = resolvePlatform()): string {
   const spec = JEV_PLATFORMS[platform];
+  if (platform === "local") return "Run /jev-platform local <port> or set JEV_LOCAL_PORT (1-65535)";
   return `Set ${spec.env} or write ~/.pi/agent/secrets/${spec.secret}`;
 }
 
@@ -116,6 +131,17 @@ export async function callJev(
   call: JevCall
 ): Promise<JevRawResponse> {
   const doFetch: typeof fetch = call.fetch ?? ((input, init) => globalThis.fetch(input, init));
+
+  if (platform === "local") {
+    const json = await postJson(
+      `http://127.0.0.1:${apiKey}/v1/systemone`,
+      {},
+      { model: call.model, state: call.state, questions: call.questions },
+      call.signal,
+      doFetch
+    );
+    return direct(json);
+  }
 
   if (platform === "typesafe") {
     const client = new TypeSafeClient({ apiKey, fetch: doFetch });

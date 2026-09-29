@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.js";
-import { callJev, resolvePlatform } from "../src/platform.js";
+import { callJev, resolveCredential, resolvePlatform } from "../src/platform.js";
 import { JevClient, selectReferencedState } from "../src/jev.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
+
+type Ctx = { ui: { notify: (text: string, level: string) => void } };
+type CommandDef = { handler: (args: string, ctx: Ctx) => Promise<void> };
 
 function setEnv(patch: Record<string, string | undefined>): () => void {
   const previous = new Map(Object.keys(patch).map((key) => [key, process.env[key]]));
@@ -334,6 +337,71 @@ test("switching platforms persists the choice for future sessions", async () => 
     // invalid store content falls back to typesafe
     fs.writeFileSync(store, "bogus");
     assert.equal(resolvePlatform(), "typesafe");
+  } finally {
+    restoreEnv();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("local platform posts to the configured port and needs no API key", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "local", JEV_LOCAL_PORT: "8123" });
+  const originalFetch = globalThis.fetch;
+  let requestUrl = "";
+  let requestBody = "";
+  globalThis.fetch = (async (input, init) => {
+    requestUrl = String(input);
+    requestBody = String(init?.body);
+    return jsonResponse({ answers: { ok: { type: "noul", noul: 0.75 } }, model: "local-jev" });
+  }) as typeof fetch;
+  try {
+    assert.equal(resolveCredential("local")?.key, "8123");
+    assert.equal(resolvePlatform(), "local");
+    const response = await callJev("local", "8123", {
+      state: { text: "hello" },
+      questions: { ok: { type: "noul", instructions: "ok?" } },
+      model: "jev-latest",
+    });
+    assert.equal(requestUrl, "http://127.0.0.1:8123/v1/systemone");
+    assert.match(requestBody, /"state"/);
+    assert.equal((response.answers as Record<string, any>).ok.noul, 0.75);
+    assert.equal(response.model, "local-jev");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});
+
+test("/jev-platform local <port> persists the port and switches", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/jev-local-");
+  const store = dir + "/config.json";
+  const restoreEnv = setEnv({ JEV_PLATFORM: "typesafe", JEV_CONFIG_FILE: store, JEV_LOCAL_PORT: undefined });
+  const commands: Record<string, CommandDef> = {};
+  try {
+    extension({
+      registerTool() {},
+      registerCommand(name: string, definition: CommandDef) { commands[name] = definition; },
+    } as unknown as ExtensionAPI);
+    const notifications: Array<[string, string]> = [];
+    const ctx: Ctx = { ui: { notify: (text: string, level: string) => { notifications.push([text, level]); } } };
+
+    await commands["jev-platform"].handler("local 8123", ctx);
+    assert.equal(process.env.JEV_PLATFORM, "local");
+    assert.equal(process.env.JEV_LOCAL_PORT, "8123");
+    const persisted = JSON.parse(fs.readFileSync(store, "utf8"));
+    assert.equal(persisted.localPort, 8123);
+    assert.equal(persisted.platform, "local");
+    assert.equal(resolveCredential("local")?.key, "8123");
+
+    // an invalid port is rejected without changing anything
+    await commands["jev-platform"].handler("local 99999", ctx);
+    assert.match(notifications.at(-1)![0], /Usage/);
+    assert.equal(process.env.JEV_LOCAL_PORT, "8123");
+
+    // the port resolves from the config file alone in a fresh process
+    delete process.env.JEV_PLATFORM;
+    delete process.env.JEV_LOCAL_PORT;
+    assert.equal(resolvePlatform(), "local");
+    assert.equal(resolveCredential("local")?.key, "8123");
   } finally {
     restoreEnv();
     fs.rmSync(dir, { recursive: true, force: true });

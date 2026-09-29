@@ -31,10 +31,13 @@ TypeSafe is the default. Set `JEV_PLATFORM` and provide the matching credential;
 | `openrouter` | `OPENROUTER_API_KEY` | `openrouter_api_key` | `typesafe/jev-1.13` |
 | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `cloudflare_api_token` | `typesafe/jev` |
 | `vercel` | `AI_GATEWAY_API_KEY` | `ai_gateway_api_key` | `typesafe-ai/jev` |
+| `local` | `JEV_LOCAL_PORT` (port, no API key) | — | `jev-latest` |
 
 Cloudflare additionally requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY_ID`. Use `JEV_MODEL` to override the model; the TypeSafe platform also honors `TYPESAFE_DEFAULT_MODEL`. Never commit API keys or send them to the model.
+The `local` platform talks to a Jev API server on localhost: set the port with `/jev-platform local <port>` (persisted as `localPort` in the same config file) or `JEV_LOCAL_PORT`. It POSTs `{model, state, questions}` to `http://127.0.0.1:<port>/v1/systemone` and expects `{answers, model?, usage?}` back; no API key is required.
 
-Switch the active platform at runtime with the `/jev-platform` command: with no argument it lists every platform with its credential origin and marks the active one; `/jev-platform <name>` switches and persists the choice to `~/.pi/agent/pi-jev-core.json` (path overridable via `JEV_CONFIG_FILE`); the `/jev-platform log on|off` switch persists to the same JSON file. Resolution order: `JEV_PLATFORM` env, then the persisted choice, then `typesafe`.
+
+Switch the active platform at runtime with the `/jev-platform` command: with no argument it lists every platform with its credential origin and marks the active one; `/jev-platform <name>` switches and persists (for `local`, `/jev-platform local <port>` also sets the port) the choice to `~/.pi/agent/pi-jev-core.json` (path overridable via `JEV_CONFIG_FILE`); the `/jev-platform log on|off` switch persists to the same JSON file. Resolution order: `JEV_PLATFORM` env, then the persisted choice, then `typesafe`.
 
 ## The `jev_evaluate` tool
 
