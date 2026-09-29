@@ -90,7 +90,7 @@ if (!a.category || a.category.value === undefined || (a.category.confidence ?? 0
 其他本项目事实：
 
 - noul 的 `value` 缺答案时会回落成 0，与"真答了 0"无法区分；要区分时读 `noulProbability(raw)`（`pi-jev-core` 导出），返回 `number | null`。
-- 平台由 env 决定（`resolvePlatform()`）：TypeSafe 云端用 `TYPESAFE_BASE_URL`/`TYPESAFE_API_KEY`；本地 llama-server 走 jevk5（`callJevK5`）。`client.platform` 固定于进程生命周期。
+- 平台由 env 决定（`resolvePlatform()`）：TypeSafe 云端用 `TYPESAFE_BASE_URL`/`TYPESAFE_API_KEY`。`client.platform` 固定于进程生命周期。
 - `state` 传 string 会自动包成 `{ text }`；传对象可按路径引用字段（见下文"Build the state"）。
 - 验证新端点：写 bun/tsx 探针，从 `src/jev.ts` 导入 `JevClient` 发三类问题、断言 `.value` 归一化；`test/core.test.ts` 有现成调用样例。
 

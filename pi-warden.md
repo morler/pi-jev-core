@@ -22,11 +22,6 @@ The package ships pure TypeScript source loaded by Pi's extension loader. Keep t
 # Platform credentials and configuration
 TypeSafe is the default platform. Platform credentials come from the documented environment variables or Pi secret files under `~/.pi/agent/secrets/`; never commit or send API keys to the model. Preserve support for `JEV_PLATFORM`, `JEV_MODEL`, platform-specific credentials, Cloudflare account and gateway configuration, and the persisted platform selection in `~/.pi/agent/pi-jev-core.json` (path overridable via `JEV_CONFIG_FILE`). Environment configuration takes precedence over persisted configuration.
 
-# Local JevK5 platform
-When `JEV_PLATFORM=jevk5`, route to the local llama-server using `JEVK5_BASE_URL`, `JEVK5_TEMP`, and `JEV_MODEL`. Preserve the reference recipe: tokenize server-side, read answer-letter logprobs from `n_probs`, and softmax them at the calibration temperature. This mode must not require an API key or egress.
-
-# Local Decider platform
-When `JEV_PLATFORM=decider`, use the local decider llama-server and its documented base URL, model label, and per-type temperatures. Preserve `DECIDER_TEMPERATURE` as the global override and the isolated score-level rows, normalization, and expected score behavior.
 
 # jev_evaluate contract
 The tool sends a `state` plus multiple named questions to the active platform and returns answers, model, usage, elapsed time, and provider raw answers. Preserve `noul` as probability of yes, `choice` as a criteria-map selection, and `score` as a value over an array of at least two levels. Transmit only the state required for the judgment.

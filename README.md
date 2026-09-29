@@ -36,58 +36,6 @@ Cloudflare additionally requires `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_GATEWAY
 
 Switch the active platform at runtime with the `/jev-platform` command: with no argument it lists every platform with its credential origin and marks the active one; `/jev-platform <name>` switches and persists the choice to `~/.pi/agent/pi-jev-core.json` (path overridable via `JEV_CONFIG_FILE`); the `/jev-platform log on|off` switch persists to the same JSON file. Resolution order: `JEV_PLATFORM` env, then the persisted choice, then `typesafe`.
 
-## Local JevK5 platform (llama-server)
-
-`JEV_PLATFORM=jevk5` routes evaluations to a local llama-server serving a JevK5 GGUF — no API key, no egress.
-
-| Env | Default | Meaning |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | Set to `jevk5` for the local model. |
-| `JEVK5_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
-| `JEVK5_TEMP` | `1.532` | Calibration temperature (1.532 = 4B, 1.42 = 2B). |
-| `JEV_MODEL` | `jevk5-4b-v0.2` | Model label reported with the answers. |
-
-Each question runs one forward pass: the prompt is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at `JEVK5_TEMP` — the JevK5 reference recipe. Start the server with the model repo's `start_JevK5_4B.sh`.
-
-## Local Decider platform (llama-server)
-
-`JEV_PLATFORM=decider` routes evaluations to a local llama-server serving a decider GGUF (decider-4b v2.1). It renders decider-ai's plain layout and calibrates with the per-type temperatures from `decider_config.json` (choice 1.110, noul 1.560, score 1.287); `DECIDER_TEMPERATURE` overrides the map with one temperature. Score questions follow decider's isolated levels: one yes/no row per level, normalized into the level distribution whose expectation is the score.
-
-| Environment variable | Default | Meaning |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | Set to `decider` for the local model. |
-| `DECIDER_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
-| `DECIDER_TEMPERATURE` | per-type map | One temperature for every type, switching the map off. |
-| `JEV_MODEL` | `decider-4b-v2.1` | Model label reported with the answers. |
-
-Each scoring row is one forward pass: the row is tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at the row type's temperature — the decider-ai reference recipe. Serve the repo's `decider-4b-q6_k.gguf` with llama-server.
-
-## Local Hopper platform (llama-server)
-
-`JEV_PLATFORM=hopper` routes evaluations to a local llama-server serving a Hopper GGUF (hopper-4b v1.1, the Qwen3.5-4B LoRA merged in). It renders hopper's reference prompt — the fixed system instruction plus one JSON user turn (`evidence`/`criterion`/`options`) — through the GGUF's own chat template (`/apply-template`, thinking off) and calibrates with the per-kind temperatures from `hopper.json` (choice 0.790, noul 0.753, score 0.900); `HOPPER_TEMPERATURE` overrides the map with one temperature.
-
-| Environment variable | Default | Meaning |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | Set to `hopper` for the local model. |
-| `HOPPER_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
-| `HOPPER_TEMPERATURE` | per-kind map | One temperature for every kind, switching the map off. |
-| `JEV_MODEL` | `hopper-4b-v1.1` | Model label reported with the answers. |
-
-Each question is one forward pass: the rendered prompt is applied and tokenized server-side, the answer letters' logprobs come back from `n_probs`, and they are softmaxed at the question kind's temperature — the hopper_decisions reference recipe. Score levels ride as named options in that same pass, and the expectation of the level distribution is the score; more than 26 options is rejected. Serve the merged `Hopper-4B` GGUF with llama-server.
-
-## Local Intern-Decision platform (llama-server)
-
-`JEV_PLATFORM=intern-decision` routes evaluations to the Intern-Decision model served by llama-server. The default URL is `http://127.0.0.1:8008`, matching the currently running Intern-Decision-4B service.
-
-| Environment variable | Default | Meaning |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | Set to `intern-decision`. |
-| `INTERN_DECISION_BASE_URL` | `http://127.0.0.1:8008` | llama-server base URL. |
-| `INTERN_DECISION_TEMPERATURE` | `1.99241824` | Positive finite candidate-probability calibration temperature. |
-| `JEV_MODEL` | `Intern-Decision-4B` | Model label reported with answers. |
-
-The adapter follows Intern-Decision's JSON decision skeleton and reads candidate-symbol logprobs with `temperature: 0` (not sampling). It applies `softmax(log(p) / T)` to the candidate probabilities, preserving the argmax while updating confidence, noul probability, and expected score. The default T was fitted on separate calibration and validation splits; set `INTERN_DECISION_TEMPERATURE=1` for uncalibrated probabilities. Custom values must be finite and positive.
-
 ## The `jev_evaluate` tool
 
 The tool sends a `state` plus multiple named questions to the active Jev platform and returns answers, the model, usage, elapsed time, and each provider's raw answer. Question types:

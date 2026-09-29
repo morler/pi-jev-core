@@ -35,45 +35,6 @@ Cloudflare 还需要 `CLOUDFLARE_ACCOUNT_ID` 和 `CLOUDFLARE_GATEWAY_ID`。可�
 
 运行时用 `/jev-platform` 命令切换激活平台：不带参数列出全部平台及其凭据来源，并标记当前通道；`/jev-platform <name>` 切换并把选择持久化到 `~/.pi/agent/pi-jev-core.json`（路径可用 `JEV_CONFIG_FILE` 覆写）。日志开关 `/jev-platform log on|off` 也保存到同一个 JSON 文件。解析顺序：`JEV_PLATFORM` 环境变量 > JSON 持久化选择 > `typesafe`；环境变量优先于持久化配置。
 
-## 本地 JevK5 平台（llama-server）
-
-`JEV_PLATFORM=jevk5` 将判断请求路由到本地 llama-server 所服务的 JevK5 GGUF 模型——无需 API key，无外网流量。
-
-| 环境变量 | 默认值 | 含义 |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | 设为 `jevk5` 即使用本地模型。 |
-| `JEVK5_BASE_URL` | `http://127.0.0.1:8008` | llama-server 基础地址。 |
-| `JEVK5_TEMP` | `1.532` | 校准温度（1.532 对应 4B，1.42 对应 2B）。 |
-| `JEV_MODEL` | `jevk5-4b-v0.2` | 随答案返回的模型标签。 |
-
-每个问题只跑一次前向推理：prompt 由服务端分词，答案字母的 logprob 经 `n_probs` 返回，再按 `JEVK5_TEMP` 做 softmax——即 JevK5 官方配方。用模型仓库的 `start_JevK5_4B.sh` 启动服务。
-
-## 本地 Decider 平台（llama-server）
-
-`JEV_PLATFORM=decider` 将判断请求路由到本地 llama-server 所服务的 decider GGUF（decider-4b v2.1）。按 decider-ai 的 plain 布局渲染请求，用 `decider_config.json` 的分类型校准温度做 softmax（choice 1.110、noul 1.560、score 1.287）；`DECIDER_TEMPERATURE` 可用单一温度覆盖整张表。score 问题遵循 decider 的孤立等级：每个等级单独一行是/否判断，归一化成等级分布后取期望作为分数。
-
-| 环境变量 | 默认值 | 含义 |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | 设为 `decider` 即使用本地模型。 |
-| `DECIDER_BASE_URL` | `http://127.0.0.1:8008` | llama-server 基础地址。 |
-| `DECIDER_TEMPERATURE` | 分类型温度表 | 为所有类型指定同一温度，关闭分类型映射。 |
-| `JEV_MODEL` | `decider-4b-v2.1` | 随答案返回的模型标签。 |
-
-每个评分行只跑一次前向推理：该行由服务端分词，答案字母的 logprob 经 `n_probs` 返回，再按该行类型的温度做 softmax——即 decider-ai 官方配方。用 llama-server 加载模型仓库的 `decider-4b-q6_k.gguf` 即可。
-
-## 本地 Intern-Decision 平台（llama-server）
-
-`JEV_PLATFORM=intern-decision` 将请求路由到 llama-server 上运行的 Intern-Decision 模型。默认地址是当前服务使用的 `http://127.0.0.1:8008`，默认模型标签为 `Intern-Decision-4B`。
-
-| 环境变量 | 默认值 | 含义 |
-|---|---|---|
-| `JEV_PLATFORM` | `typesafe` | 设为 `intern-decision`。 |
-| `INTERN_DECISION_BASE_URL` | `http://127.0.0.1:8008` | llama-server 基础地址。 |
-| `INTERN_DECISION_TEMPERATURE` | `1.99241824` | 必须为有限正数的候选概率校准温度。 |
-| `JEV_MODEL` | `Intern-Decision-4B` | 随答案返回的模型标签。 |
-
-适配器遵循 Intern-Decision 的 JSON decision skeleton，并以 `temperature: 0` 读取候选符号 logits（这不是采样温度），再按 `softmax(log(p) / T)` 校准候选概率。校准保持 argmax 不变，但会更新 confidence、noul 概率和 score 期望值；默认温度是在独立校准集/验证集上拟合的。设置 `INTERN_DECISION_TEMPERATURE=1` 可使用未校准概率，自定义值必须有限且大于 0。
-
 ## `jev_evaluate` 工具
 
 工具把 `state` 和多个命名问题发送到当前 Jev 平台，返回答案、模型、用量、耗时和 provider 原始答案。问题说明：

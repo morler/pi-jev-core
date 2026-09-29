@@ -2,14 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
-import { callJevK5, JEVK5_DEFAULT_URL } from "./jevk5.js";
-import { callDecider, DECIDER_DEFAULT_URL } from "./decider.js";
-import { callHopper, HOPPER_DEFAULT_URL } from "./hopper.js";
-import { callInternDecision, INTERN_DECISION_DEFAULT_URL } from "./intern-decision.js";
 import { readConfig, updateConfig } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "jevk5" | "decider" | "hopper" | "intern-decision";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -28,12 +24,6 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   openrouter: { env: "OPENROUTER_API_KEY", secret: "openrouter_api_key", model: "typesafe/jev-1.13" },
   cloudflare: { env: "CLOUDFLARE_API_TOKEN", secret: "cloudflare_api_token", model: "typesafe/jev" },
   vercel: { env: "AI_GATEWAY_API_KEY", secret: "ai_gateway_api_key", model: "typesafe-ai/jev" },
-  // jevk5's env carries a server URL, not a credential; resolveCredential's jevk5 branch
-  // never returns null (isConfigured is always true), so spec.env/secret are never consulted.
-  jevk5: { env: "JEVK5_BASE_URL", secret: "jevk5_base_url", model: "jevk5-4b-v0.2" },
-  decider: { env: "DECIDER_BASE_URL", secret: "decider_base_url", model: "decider-4b-v2.1" },
-  hopper: { env: "HOPPER_BASE_URL", secret: "hopper_base_url", model: "hopper-4b-v1.1" },
-  "intern-decision": { env: "INTERN_DECISION_BASE_URL", secret: "intern_decision_base_url", model: "Intern-Decision-4B" },
 };
 
 /** Where /jev-platform persists the choice for future sessions. */
@@ -79,37 +69,6 @@ export interface Credential {
 
 /** API credential from the platform's environment variable, then its Pi secret file. */
 export function resolveCredential(platform: JevPlatform = resolvePlatform()): Credential | null {
-  if (platform === "jevk5") {
-    // Local llama-server needs no API key; the credential carries the server base URL.
-    const url = process.env.JEVK5_BASE_URL?.trim();
-    return {
-      key: url || JEVK5_DEFAULT_URL,
-      source: "env",
-      origin: url ? "$JEVK5_BASE_URL" : `built-in default (${JEVK5_DEFAULT_URL})`,
-    };
-  }
-  if (platform === "intern-decision") {
-    const url = process.env.INTERN_DECISION_BASE_URL?.trim();
-    return { key: url || INTERN_DECISION_DEFAULT_URL, source: "env", origin: url ? "$INTERN_DECISION_BASE_URL" : `built-in default (${INTERN_DECISION_DEFAULT_URL})` };
-  }
-  if (platform === "decider") {
-    // Local llama-server needs no API key; the credential carries the server base URL.
-    const url = process.env.DECIDER_BASE_URL?.trim();
-    return {
-      key: url || DECIDER_DEFAULT_URL,
-      source: "env",
-      origin: url ? "$DECIDER_BASE_URL" : `built-in default (${DECIDER_DEFAULT_URL})`,
-    };
-  }
-  if (platform === "hopper") {
-    // Local llama-server needs no API key; the credential carries the server base URL.
-    const url = process.env.HOPPER_BASE_URL?.trim();
-    return {
-      key: url || HOPPER_DEFAULT_URL,
-      source: "env",
-      origin: url ? "$HOPPER_BASE_URL" : `built-in default (${HOPPER_DEFAULT_URL})`,
-    };
-  }
   const spec = JEV_PLATFORMS[platform];
 
   const envKey = process.env[spec.env]?.trim();
@@ -157,22 +116,6 @@ export async function callJev(
   call: JevCall
 ): Promise<JevRawResponse> {
   const doFetch: typeof fetch = call.fetch ?? ((input, init) => globalThis.fetch(input, init));
-
-  if (platform === "jevk5") {
-    // apiKey carries the llama-server base URL for this platform.
-    return callJevK5(apiKey, call, doFetch);
-  }
-
-  if (platform === "decider") {
-    // apiKey carries the llama-server base URL for this platform too.
-    return callDecider(apiKey, call, doFetch);
-  }
-
-  if (platform === "hopper") {
-    return callHopper(apiKey, call, doFetch);
-  }
-
-  if (platform === "intern-decision") return callInternDecision(apiKey, call, doFetch);
 
   if (platform === "typesafe") {
     const client = new TypeSafeClient({ apiKey, fetch: doFetch });
