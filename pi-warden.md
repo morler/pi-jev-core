@@ -24,7 +24,7 @@ TypeSafe is the default platform. Platform credentials come from the documented 
 
 
 # Local platform
-When `JEV_PLATFORM=local`, POST `{model, state, questions}` to `http://127.0.0.1:<port>/v1/systemone` and read `{answers, model?, usage?}`. The port comes from `JEV_LOCAL_PORT` or the persisted `localPort` in the config file, and no API key is required.
+When `JEV_PLATFORM=local`, POST `{model, state, questions}` to `http://127.0.0.1:<port>/` and read `{answers, model?, usage?}`. The port comes from `JEV_LOCAL_PORT` or the persisted `localPort` in the config file, and no API key is required.
 
 # jev_evaluate contract
 The tool sends a `state` plus multiple named questions to the active platform and returns answers, model, usage, elapsed time, and provider raw answers. Preserve `noul` as probability of yes, `choice` as a criteria-map selection, and `score` as a value over an array of at least two levels. Transmit only the state required for the judgment.

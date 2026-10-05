@@ -361,7 +361,7 @@ test("local platform posts to the configured port and needs no API key", async (
       questions: { ok: { type: "noul", instructions: "ok?" } },
       model: "jev-latest",
     });
-    assert.equal(requestUrl, "http://127.0.0.1:8123/v1/systemone");
+    assert.equal(requestUrl, "http://127.0.0.1:8123/");
     assert.match(requestBody, /"state"/);
     assert.equal((response.answers as Record<string, any>).ok.noul, 0.75);
     assert.equal(response.model, "local-jev");

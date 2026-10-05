@@ -134,7 +134,7 @@ export async function callJev(
 
   if (platform === "local") {
     const json = await postJson(
-      `http://127.0.0.1:${apiKey}/v1/systemone`,
+      `http://127.0.0.1:${apiKey}/`,
       {},
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,
