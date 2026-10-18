@@ -4,3 +4,14 @@ coverage/
 *.tgz
 .pi/
 .supercov/
+
+# Credentials are read from the environment or ~/.pi/agent/secrets, never from a checked-in file.
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

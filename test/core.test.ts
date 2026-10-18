@@ -235,6 +235,7 @@ test("choice questions without a criteria map fail fast locally, never reaching 
       /needs criteria as a map/
     );
     assert.equal(fetchCalls, 0, "the malformed request never reached the network");
+    assert.match(client.stats.lastError ?? "", /needs criteria as a map/, "a pre-flight failure reaches stats");
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv();
@@ -261,6 +262,32 @@ test("score questions with fewer than two criteria fail fast locally, never reac
       );
     }
     assert.equal(fetchCalls, 0, "the malformed request never reached the network");
+    assert.match(client.stats.lastError ?? "", /needs criteria as an array/, "a pre-flight failure reaches stats");
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});
+
+test("an unsupported question type is rejected instead of being silently dropped", async () => {
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key" });
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (async () => {
+    fetchCalls++;
+    return jsonResponse({ answers: {} });
+  }) as typeof fetch;
+  try {
+    const client = new JevClient();
+    await assert.rejects(
+      client.evaluate({
+        state: "s",
+        questions: { bad: { type: "other", instructions: "Which one?" } as any },
+      }),
+      /Unsupported question type: other/
+    );
+    assert.equal(fetchCalls, 0, "the unsupported question never reached the network");
+    assert.match(client.stats.lastError ?? "", /Unsupported question type/);
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv();
@@ -298,6 +325,18 @@ test("/jev-platform lists, validates, and switches platforms", async () => {
     assert.equal(notifications.at(-1)![1], "warning");
     assert.match(notifications.at(-1)![0], /Unknown platform/);
 
+    // "constructor" is inherited rather than a platform name, so an `in` check would have accepted it.
+    await command.handler("constructor", ctx);
+    assert.equal(process.env.JEV_PLATFORM, "cloudflare", "an inherited object key must not switch");
+    assert.match(notifications.at(-1)![0], /Unknown platform/);
+
+    await command.handler("local 0x10", ctx);
+    assert.equal(notifications.at(-1)![1], "warning");
+    assert.match(notifications.at(-1)![0], /Usage: \/jev-platform local/);
+
+    await command.handler("local 9000 extra", ctx);
+    assert.match(notifications.at(-1)![0], /Unexpected argument/);
+
     await command.handler("log on", ctx);
     assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, true);
     assert.match(notifications.at(-1)![0], /enabled/);
@@ -307,6 +346,29 @@ test("/jev-platform lists, validates, and switches platforms", async () => {
   } finally {
     restoreEnv();
     fs.rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test("a switch that cannot be persisted leaves the platform untouched", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/jev-config-");
+  // Pointing the config path at a directory makes every write fail before the environment is touched.
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key", JEV_CONFIG_FILE: dir });
+  try {
+    const commands: Record<string, any> = {};
+    extension({
+      registerTool() {},
+      registerCommand(name: string, definition: any) { commands[name] = definition; },
+    } as unknown as ExtensionAPI);
+    const notifications: Array<[string, string]> = [];
+    const ctx = { ui: { notify: (text: string, level: string) => { notifications.push([text, level]); } } } as any;
+
+    await commands["jev-platform"].handler("cloudflare", ctx);
+    assert.equal(process.env.JEV_PLATFORM, "openrouter", "a failed persist must not switch the platform");
+    assert.equal(notifications.at(-1)![1], "error");
+    assert.match(notifications.at(-1)![0], /Unable to persist/);
+  } finally {
+    restoreEnv();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
-import { configPath, readConfig, updateConfig } from "./config.js";
+import { configPath, errorMessage, readConfig, updateConfig, writeFileAtomic } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
 export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "local";
@@ -27,23 +27,73 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   local: { env: "JEV_LOCAL_PORT", model: "jev-latest" },
 };
 
+/** Own-property check: `in` also accepts inherited keys such as `constructor` or `toString`. */
+export function isJevPlatform(value: string): value is JevPlatform {
+  return Object.hasOwn(JEV_PLATFORMS, value);
+}
+
+/** Hosted endpoints and gateway versions, kept here so an API bump is one edit. */
+const ENDPOINTS = {
+  openrouter: "https://openrouter.ai/api/alpha/decisions",
+  vercel: "https://ai-gateway.vercel.sh/v4/ai/evaluation-model",
+  cloudflare: "https://api.cloudflare.com/client/v4/accounts",
+  local: (port: number) => `http://127.0.0.1:${port}/v1/systemone`,
+} as const;
+const GATEWAY_PROTOCOL_VERSION = "0.0.1";
+const EVALUATION_SPEC_VERSION = "4";
+/** A provider that never answers must not hold the caller's request open forever. */
+const REQUEST_TIMEOUT_MS = 120_000;
+
+/** Narrow one JSON layer to an object without trusting any of its fields. */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+/** Keep a number we can actually use; anything else (missing, string, NaN) is undefined. */
+function optionalNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** The SDK and the direct APIs disagree on casing, and either may omit counts; callers get one shape. */
+function normalizeUsage(value: unknown): JevRawResponse["usage"] {
+  const usage = asRecord(value);
+  if (!usage) return undefined;
+  const inputTokens = optionalNumber(usage.input_tokens) ?? optionalNumber(usage.inputTokens);
+  const outputTokens = optionalNumber(usage.output_tokens) ?? optionalNumber(usage.outputTokens);
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens:
+      optionalNumber(usage.total_tokens) ?? optionalNumber(usage.totalTokens) ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+  };
+}
+
 /** Where /jev-platform persists the choice for future sessions. */
 export function platformStorePath(): string {
-  return process.env.JEV_PLATFORM_FILE?.trim() || path.join(os.homedir(), ".pi", "agent", "pi-jev-core.json");
+  return process.env.JEV_PLATFORM_FILE?.trim() || configPath();
 }
 
 export function readPersistedPlatform(): JevPlatform | null {
-  const raw = process.env.JEV_PLATFORM_FILE?.trim()
-    ? (() => { try { return fs.readFileSync(platformStorePath(), "utf8").trim().toLowerCase(); } catch { return ""; } })()
-    : readConfig().platform?.trim().toLowerCase() ?? "";
-  return raw && raw in JEV_PLATFORMS ? (raw as JevPlatform) : null;
+  const stored = process.env.JEV_PLATFORM_FILE?.trim() ? readPlatformStore() : readConfig().platform;
+  const raw = stored?.trim().toLowerCase() ?? "";
+  return raw && isJevPlatform(raw) ? raw : null;
+}
+
+/** A store file that is not there yet is "nothing stored"; one that cannot be read is a failure the caller must hear about. */
+function readPlatformStore(): string | undefined {
+  try {
+    return fs.readFileSync(platformStorePath(), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("Unable to read the Jev platform store:", errorMessage(error));
+    }
+    return undefined;
+  }
 }
 
 export function persistPlatform(platform: JevPlatform): void {
   if (process.env.JEV_PLATFORM_FILE?.trim()) {
-    const store = platformStorePath();
-    fs.mkdirSync(path.dirname(store), { recursive: true });
-    fs.writeFileSync(store, platform + "\n");
+    writeFileAtomic(platformStorePath(), platform + "\n", 0o600);
     return;
   }
   updateConfig({ platform });
@@ -52,7 +102,7 @@ export function persistPlatform(platform: JevPlatform): void {
 /** Active platform: JEV_PLATFORM wins, then the persisted /jev-platform choice, then TypeSafe. */
 export function resolvePlatform(): JevPlatform {
   const raw = process.env.JEV_PLATFORM?.trim().toLowerCase();
-  if (raw && raw in JEV_PLATFORMS) return raw as JevPlatform;
+  if (raw && isJevPlatform(raw)) return raw;
   return readPersistedPlatform() ?? "typesafe";
 }
 
@@ -95,8 +145,11 @@ export function resolveCredential(platform: JevPlatform = resolvePlatform()): Cr
     if (content) {
       return { kind: "apiKey", key: content, source: "file", origin: `~/.pi/agent/secrets/${spec.secret}` };
     }
-  } catch {
-    // Missing or unreadable secret file: report unconfigured instead of failing.
+  } catch (error) {
+    // A missing secret file just means "not configured"; an unreadable one is a failure the user must hear about.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`Unable to read ${secretPath}:`, errorMessage(error));
+    }
   }
 
   return null;
@@ -136,7 +189,7 @@ export async function callJev(
   if (platform === "local") {
     if (credential.kind !== "port") throw new Error("The local platform is addressed by port, not by an API key.");
     const json = await postJson(
-      `http://127.0.0.1:${credential.port}/v1/systemone`,
+      ENDPOINTS.local(credential.port),
       {},
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,
@@ -155,23 +208,16 @@ export async function callJev(
       { state: call.state, questions: call.questions, model: call.model } as SystemOneCall,
       { signal: call.signal }
     );
-    const usage = res?.usage;
     return {
       answers: res?.answers ?? {},
       model: typeof res?.model === "string" ? res.model : undefined,
-      usage: usage
-        ? {
-            inputTokens: usage.input_tokens,
-            outputTokens: usage.output_tokens,
-            totalTokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
-          }
-        : undefined,
+      usage: normalizeUsage(res?.usage),
     };
   }
 
   if (platform === "openrouter") {
     const json = await postJson(
-      "https://openrouter.ai/api/alpha/decisions",
+      ENDPOINTS.openrouter,
       bearer(apiKey),
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,
@@ -183,7 +229,7 @@ export async function callJev(
   if (platform === "cloudflare") {
     const { accountId, gatewayId } = cloudflareConfig();
     const json = await postJson(
-      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/ai/run`,
+      `${ENDPOINTS.cloudflare}/${encodeURIComponent(accountId)}/ai/run`,
       {
         ...bearer(apiKey),
         "cf-aig-gateway-id": gatewayId,
@@ -200,13 +246,13 @@ export async function callJev(
 
   // vercel: AI Gateway evaluation endpoint, taking the same question objects as the direct APIs.
   const json = await postJson(
-    "https://ai-gateway.vercel.sh/v4/ai/evaluation-model",
+    ENDPOINTS.vercel,
     {
       ...bearer(apiKey),
       // The gateway rejects requests without its protocol and auth-method headers.
-      "ai-gateway-protocol-version": "0.0.1",
+      "ai-gateway-protocol-version": GATEWAY_PROTOCOL_VERSION,
       "ai-gateway-auth-method": "api-key",
-      "ai-evaluation-model-specification-version": "4",
+      "ai-evaluation-model-specification-version": EVALUATION_SPEC_VERSION,
       "ai-model-id": call.model,
     },
     {
@@ -244,44 +290,37 @@ function cloudflareConfig(): { accountId: string; gatewayId: string } {
 }
 
 /** Normalize the `{answers, model?, usage?}` payload the direct APIs share. */
-function direct(json: any): JevRawResponse {
-  const answers = json?.answers;
-  if (!answers || typeof answers !== "object") {
+function direct(json: unknown): JevRawResponse {
+  const payload = asRecord(json);
+  const answers = asRecord(payload?.answers);
+  if (!answers) {
     throw new Error("Jev response contained no answers.");
   }
 
-  const usage = json?.usage;
-  const inputTokens = usage?.input_tokens ?? usage?.inputTokens;
-  const outputTokens = usage?.output_tokens ?? usage?.outputTokens;
+  const model = payload?.model;
 
   return {
     answers,
-    model: typeof json?.model === "string" ? json.model : undefined,
-    usage: usage
-      ? {
-          inputTokens,
-          outputTokens,
-          totalTokens: usage.total_tokens ?? (inputTokens ?? 0) + (outputTokens ?? 0),
-        }
-      : undefined,
+    model: typeof model === "string" ? model : undefined,
+    usage: normalizeUsage(payload?.usage),
   };
 }
 
 /** Cloudflare nests the answer payload under up to two `result` envelopes. */
-function unwrapEnvelope(json: any): any {
+function unwrapEnvelope(json: unknown): unknown {
   let value = json;
-  for (let depth = 0; depth < 3 && value && typeof value === "object" && !value.answers; depth++) {
-    value = value.result ?? value;
+  for (let depth = 0; depth < 3; depth++) {
+    const record = asRecord(value);
+    if (!record || record.answers) break;
+    value = record.result ?? value;
   }
   return value;
 }
 
 /** The gateway reports per-question confidence in provider metadata, not in the answer. */
-function extractConfidence(json: any): Record<string, number> | undefined {
-  const confidence = json?.providerMetadata?.typesafe?.confidence;
-  if (!confidence || typeof confidence !== "object") return undefined;
-
-  const entries = Object.entries(confidence).filter(([, value]) => typeof value === "number");
+function extractConfidence(json: unknown): Record<string, number> | undefined {
+  const confidence = asRecord(asRecord(asRecord(json)?.providerMetadata)?.typesafe)?.confidence;
+  const entries = Object.entries(asRecord(confidence) ?? {}).filter(([, value]) => Number.isFinite(value));
   return entries.length > 0 ? (Object.fromEntries(entries) as Record<string, number>) : undefined;
 }
 
@@ -291,23 +330,33 @@ async function postJson(
   body: unknown,
   signal: AbortSignal | undefined,
   fetchImpl: typeof fetch
-): Promise<any> {
-  const response = await fetchImpl(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", ...headers },
-    body: JSON.stringify(body),
-    signal,
-    redirect: "error",
-  });
+): Promise<unknown> {
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      // The caller's signal and the deadline both count: whichever fires first aborts the request.
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      redirect: "error",
+    });
+  } catch (error) {
+    if (timeout.aborted) throw new Error(`Jev request timed out after ${REQUEST_TIMEOUT_MS} ms.`, { cause: error });
+    throw new Error(`Jev request failed: ${errorMessage(error)}`, { cause: error });
+  }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(
-      `Jev request failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`
-    );
+    throw new Error(`Jev request failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`);
   }
 
-  return response.json();
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error("Jev request failed: the response body was not valid JSON.", { cause: error });
+  }
 }
 
 function bearer(apiKey: string): Record<string, string> {

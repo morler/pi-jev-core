@@ -1,4 +1,4 @@
-export { JevClient, noulProbability } from "./jev.js";
+export { JevClient, noulProbability, selectReferencedState } from "./jev.js";
 export {
   callJev,
   credentialHint,
@@ -6,6 +6,9 @@ export {
   resolveModel,
   resolvePlatform,
   JEV_PLATFORMS,
+  isJevPlatform,
+  persistPlatform,
+  readPersistedPlatform,
   type JevPlatform,
   type PlatformSpec,
   type Credential,
@@ -14,6 +17,7 @@ export {
 } from "./platform.js";
 export type {
   QuestionType,
+  BaseQuestionConfig,
   QuestionConfig,
   ChoiceQuestionConfig,
   NoulQuestionConfig,
@@ -23,3 +27,5 @@ export type {
   JevAnswerResult,
   JevSessionStats,
 } from "./types.js";
+export { readConfig, updateConfig } from "./config.js";
+export type { JevConfig } from "./config.js";
