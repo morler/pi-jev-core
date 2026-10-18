@@ -45,7 +45,6 @@ interface RawAnswer {
   probabilities?: Record<string, number>;
 }
 
-/** Send only state fields explicitly referenced by question instructions. No summarization is performed. */
 const DANGEROUS_PATH_PARTS = new Set(["__proto__", "constructor", "prototype"]);
 
 function referencedPaths(instructions: string): (string | number)[][] {
@@ -108,8 +107,8 @@ export class JevClient {
     return Boolean(resolveCredential(this.platform));
   }
 
-  /** Human-readable description of where the API key came from, or null when unconfigured. */
-  public getKeyOrigin(): string | null {
+  /** Human-readable description of where the credential came from, or null when unconfigured. */
+  public getCredentialOrigin(): string | null {
     return resolveCredential(this.platform)?.origin ?? null;
   }
 
@@ -118,10 +117,10 @@ export class JevClient {
     signal?: AbortSignal
   ): Promise<JevEvaluationResponse> {
     const startTime = Date.now();
-    const apiKey = resolveCredential(this.platform)?.key;
-    if (!apiKey) {
+    const credential = resolveCredential(this.platform);
+    if (!credential) {
       const err = new Error(
-        `Missing Jev API key for the ${this.platform} platform. ${credentialHint(this.platform)}.`
+        `Missing ${this.platform === "local" ? "port" : "API key"} for the ${this.platform} platform. ${credentialHint(this.platform)}.`
       );
       appendJevLog({ type: "evaluation", request, error: err.message });
       throw err;
@@ -153,7 +152,7 @@ export class JevClient {
     const model = resolveModel(this.platform, request.model);
 
     try {
-      const response = await callJev(this.platform, apiKey, { state, questions, model, signal });
+      const response = await callJev(this.platform, credential, { state, questions, model, signal });
 
       const elapsedMs = Date.now() - startTime;
       this.stats.requestsCount += 1;

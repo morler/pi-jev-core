@@ -109,7 +109,7 @@ export default function (pi: ExtensionAPI): void {
       process.env.JEV_PLATFORM = requested;
       persistPlatform(requested as JevPlatform);
       jev = new JevClient();
-      const origin = jev.getKeyOrigin() ?? "not configured";
+      const origin = jev.getCredentialOrigin() ?? "not configured";
       ctx.ui.notify(`Jev platform switched to ${requested} (credential: ${origin}, model: ${resolveModel(requested as JevPlatform)}; persisted to ${platformStorePath()})`, "info");
     },
   });

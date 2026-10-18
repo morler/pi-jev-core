@@ -10,8 +10,8 @@ export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
   env: string;
-  /** Secret file name under ~/.pi/agent/secrets. */
-  secret: string;
+  /** Secret file name under ~/.pi/agent/secrets; only hosted platforms have one. */
+  secret?: string;
   /** Default Jev model id for this platform. */
   model: string;
 }
@@ -24,7 +24,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   openrouter: { env: "OPENROUTER_API_KEY", secret: "openrouter_api_key", model: "typesafe/jev-1.13" },
   cloudflare: { env: "CLOUDFLARE_API_TOKEN", secret: "cloudflare_api_token", model: "typesafe/jev" },
   vercel: { env: "AI_GATEWAY_API_KEY", secret: "ai_gateway_api_key", model: "typesafe-ai/jev" },
-  local: { env: "JEV_LOCAL_PORT", secret: "local_jev_port", model: "jev-latest" },
+  local: { env: "JEV_LOCAL_PORT", model: "jev-latest" },
 };
 
 /** Where /jev-platform persists the choice for future sessions. */
@@ -62,37 +62,38 @@ export function resolveModel(platform: JevPlatform, override?: string): string {
   return override?.trim() || process.env.JEV_MODEL?.trim() || fallback || JEV_PLATFORMS[platform].model;
 }
 
-export interface Credential {
-  key: string;
-  source: "env" | "file";
-  origin: string;
-}
+/** How to reach a platform: an API key, or — for `local` — the port it listens on. */
+export type Credential =
+  | { kind: "apiKey"; key: string; source: "env" | "file"; origin: string }
+  | { kind: "port"; port: number; source: "env" | "file"; origin: string };
 
 function isPort(value: string): boolean {
   return /^[0-9]+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535;
 }
 
-/** API credential from the platform's environment variable, then its Pi secret file. */
+/** Credential for the platform: its environment variable, then the persisted port or its Pi secret file. */
 export function resolveCredential(platform: JevPlatform = resolvePlatform()): Credential | null {
   const spec = JEV_PLATFORMS[platform];
   if (platform === "local") {
     const envPort = process.env.JEV_LOCAL_PORT?.trim();
-    if (envPort && isPort(envPort)) return { key: envPort, source: "env", origin: "$JEV_LOCAL_PORT" };
+    if (envPort && isPort(envPort)) return { kind: "port", port: Number(envPort), source: "env", origin: "$JEV_LOCAL_PORT" };
     const configPort = readConfig().localPort;
     if (configPort !== undefined && isPort(String(configPort))) {
-      return { key: String(configPort), source: "file", origin: configPath() };
+      return { kind: "port", port: Number(configPort), source: "file", origin: configPath() };
     }
     return null;
   }
 
   const envKey = process.env[spec.env]?.trim();
-  if (envKey) return { key: envKey, source: "env", origin: `$${spec.env}` };
+  if (envKey) return { kind: "apiKey", key: envKey, source: "env", origin: `$${spec.env}` };
 
+  // A hosted platform that names no secret file cannot be configured from disk.
+  if (!spec.secret) return null;
   const secretPath = path.join(os.homedir(), ".pi", "agent", "secrets", spec.secret);
   try {
     const content = fs.readFileSync(secretPath, "utf8").trim();
     if (content) {
-      return { key: content, source: "file", origin: `~/.pi/agent/secrets/${spec.secret}` };
+      return { kind: "apiKey", key: content, source: "file", origin: `~/.pi/agent/secrets/${spec.secret}` };
     }
   } catch {
     // Missing or unreadable secret file: report unconfigured instead of failing.
@@ -127,14 +128,15 @@ export interface JevRawResponse {
 /** Send one System One evaluation to the active platform's Jev endpoint. */
 export async function callJev(
   platform: JevPlatform,
-  apiKey: string,
+  credential: Credential,
   call: JevCall
 ): Promise<JevRawResponse> {
   const doFetch: typeof fetch = call.fetch ?? ((input, init) => globalThis.fetch(input, init));
 
   if (platform === "local") {
+    if (credential.kind !== "port") throw new Error("The local platform is addressed by port, not by an API key.");
     const json = await postJson(
-      `http://127.0.0.1:${apiKey}/`,
+      `http://127.0.0.1:${credential.port}/`,
       {},
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,
@@ -142,6 +144,10 @@ export async function callJev(
     );
     return direct(json);
   }
+
+  // Everything below talks to a hosted API, so a port credential here is a caller bug.
+  if (credential.kind !== "apiKey") throw new Error(`The ${platform} platform is addressed by an API key.`);
+  const apiKey = credential.key;
 
   if (platform === "typesafe") {
     const client = new TypeSafeClient({ apiKey, fetch: doFetch });

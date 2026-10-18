@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.js";
-import { callJev, resolveCredential, resolvePlatform } from "../src/platform.js";
+import { callJev, resolveCredential, resolvePlatform, type Credential } from "../src/platform.js";
 import { JevClient, selectReferencedState } from "../src/jev.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
 type Ctx = { ui: { notify: (text: string, level: string) => void } };
 type CommandDef = { handler: (args: string, ctx: Ctx) => Promise<void> };
+
+/** A hosted-platform credential for tests that only care about the key value. */
+const keyCred = (key = "unit-test-key"): Credential => ({ kind: "apiKey", key, source: "env", origin: "test" });
 
 function setEnv(patch: Record<string, string | undefined>): () => void {
   const previous = new Map(Object.keys(patch).map((key) => [key, process.env[key]]));
@@ -142,7 +145,7 @@ test("Vercel maps Noul and carries confidence through", async () => {
     });
   };
 
-  const response = await callJev("vercel", "unit-test-key", {
+  const response = await callJev("vercel", keyCred(), {
     state: "text",
     questions: { likely: { type: "noul", instructions: "Is it likely?" } },
     model: "typesafe-ai/jev",
@@ -174,7 +177,7 @@ test("Cloudflare unwraps its gateway response and sends the account route", asyn
   };
 
   try {
-    const response = await callJev("cloudflare", "unit-test-key", {
+    const response = await callJev("cloudflare", keyCred(), {
       state: "text",
       questions: { ready: { type: "noul", instructions: "Ready?" } },
       model: "typesafe/jev",
@@ -194,7 +197,7 @@ test("Cloudflare unwraps its gateway response and sends the account route", asyn
 
 test("TypeSafe platform delegates to its SDK", async () => {
   let calls = 0;
-  const response = await callJev("typesafe", "unit-test-key", {
+  const response = await callJev("typesafe", keyCred(), {
     state: "text",
     questions: { ready: { type: "noul", instructions: "Ready?" } },
     model: "jev-latest",
@@ -354,9 +357,9 @@ test("local platform posts to the configured port and needs no API key", async (
     return jsonResponse({ answers: { ok: { type: "noul", noul: 0.75 } }, model: "local-jev" });
   }) as typeof fetch;
   try {
-    assert.equal(resolveCredential("local")?.key, "8123");
+    assert.deepEqual(resolveCredential("local"), { kind: "port", port: 8123, source: "env", origin: "$JEV_LOCAL_PORT" });
     assert.equal(resolvePlatform(), "local");
-    const response = await callJev("local", "8123", {
+    const response = await callJev("local", { kind: "port", port: 8123, source: "env", origin: "$JEV_LOCAL_PORT" }, {
       state: { text: "hello" },
       questions: { ok: { type: "noul", instructions: "ok?" } },
       model: "jev-latest",
@@ -369,6 +372,12 @@ test("local platform posts to the configured port and needs no API key", async (
     globalThis.fetch = originalFetch;
     restoreEnv();
   }
+});
+
+test("callJev rejects a credential that does not match the platform's addressing", async () => {
+  const portCredential: Credential = { kind: "port", port: 8123, source: "env", origin: "$JEV_LOCAL_PORT" };
+  await assert.rejects(() => callJev("vercel", portCredential, { state: "text", questions: {}, model: "typesafe-ai/jev" }));
+  await assert.rejects(() => callJev("local", keyCred(), { state: "text", questions: {}, model: "jev-latest" }));
 });
 
 test("/jev-platform local <port> persists the port and switches", async () => {
@@ -390,7 +399,8 @@ test("/jev-platform local <port> persists the port and switches", async () => {
     const persisted = JSON.parse(fs.readFileSync(store, "utf8"));
     assert.equal(persisted.localPort, 8123);
     assert.equal(persisted.platform, "local");
-    assert.equal(resolveCredential("local")?.key, "8123");
+    const local = resolveCredential("local");
+    assert.ok(local?.kind === "port" && local.port === 8123);
 
     // an invalid port is rejected without changing anything
     await commands["jev-platform"].handler("local 99999", ctx);
@@ -401,7 +411,8 @@ test("/jev-platform local <port> persists the port and switches", async () => {
     delete process.env.JEV_PLATFORM;
     delete process.env.JEV_LOCAL_PORT;
     assert.equal(resolvePlatform(), "local");
-    assert.equal(resolveCredential("local")?.key, "8123");
+    const fromFile = resolveCredential("local");
+    assert.ok(fromFile?.kind === "port" && fromFile.port === 8123);
   } finally {
     restoreEnv();
     fs.rmSync(dir, { recursive: true, force: true });
