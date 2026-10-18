@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import extension from "../extensions/index.js";
-import { callJev, resolveCredential, resolvePlatform, type Credential } from "../src/platform.js";
-import { JevClient, selectReferencedState } from "../src/jev.js";
+import { callJev, resolveCredential, resolveModel, resolvePlatform, type Credential } from "../src/platform.js";
+import { configPath, updateConfig } from "../src/config.js";
+import { JevClient, getJev, resetJev, selectReferencedState } from "../src/jev.js";
 import * as fs from "node:fs";
 import * as os from "node:os";
 
@@ -61,6 +62,11 @@ test("selectReferencedState rejects prototype-pollution paths", () => {
   assert.throws(() => selectReferencedState(
     { change: "ok" },
     { q: { instructions: "Make a decision" } }
+  ));
+  // A scalar on the way down is not an object to read through either.
+  assert.throws(() => selectReferencedState(
+    { change: "ok" },
+    { q: { instructions: "Read `change.nested`" } }
   ));
 });
 
@@ -372,6 +378,35 @@ test("a switch that cannot be persisted leaves the platform untouched", async ()
   }
 });
 
+
+test("getJev is shared and resetJev rebuilds it for the switched platform", () => {
+  const restoreEnv = setEnv({
+    JEV_PLATFORM: "openrouter",
+    OPENROUTER_API_KEY: "unit-test-key",
+    JEV_MODEL: undefined,
+    TYPESAFE_DEFAULT_MODEL: undefined,
+  });
+  try {
+    resetJev();
+    const first = getJev();
+    assert.equal(getJev(), first, "one client per process, shared by every extension");
+    assert.equal(first.platform, "openrouter");
+    assert.equal(first.connectionKey(), "openrouter|typesafe/jev-1.13|unit-test-key");
+
+    process.env.JEV_PLATFORM = "cloudflare";
+    const switched = getJev();
+    assert.notEqual(switched, first, "a switch rebuilds the client even without a reset");
+    assert.equal(switched.platform, "cloudflare");
+    assert.notEqual(switched.connectionKey(), first.connectionKey(), "a platform switch invalidates cache keys");
+
+    resetJev();
+    assert.notEqual(getJev(), switched, "reset hands out a fresh client");
+  } finally {
+    resetJev();
+    restoreEnv();
+  }
+});
+
 test("switching platforms persists the choice for future sessions", async () => {
   const dir = fs.mkdtempSync(os.tmpdir() + "/jev-store-");
   const store = dir + "/platform";
@@ -453,6 +488,9 @@ test("callJev rejects a credential that does not match the platform's addressing
   const portCredential: Credential = { kind: "port", port: 8123, source: "env", origin: "$JEV_LOCAL_PORT" };
   await assert.rejects(() => callJev("vercel", portCredential, { state: "text", questions: {}, model: "typesafe-ai/jev" }));
   await assert.rejects(() => callJev("local", keyCred(), { state: "text", questions: {}, model: "jev-latest" }));
+  const endpointCredential: Credential = { kind: "endpoint", url: "https://jev.example.com", source: "env", origin: "$JEV_CUSTOM_ENDPOINT" };
+  await assert.rejects(() => callJev("custom", keyCred(), { state: "text", questions: {}, model: "jev-latest" }));
+  await assert.rejects(() => callJev("openrouter", endpointCredential, { state: "text", questions: {}, model: "typesafe/jev-1.13" }));
 });
 
 test("/jev-platform local <port> persists the port and switches", async () => {
@@ -488,6 +526,171 @@ test("/jev-platform local <port> persists the port and switches", async () => {
     assert.equal(resolvePlatform(), "local");
     const fromFile = resolveCredential("local");
     assert.ok(fromFile?.kind === "port" && fromFile.port === 8123);
+  } finally {
+    restoreEnv();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("custom platform posts to its own endpoint with the key and model it was given", async () => {
+  const restoreEnv = setEnv({
+    JEV_PLATFORM: "custom",
+    JEV_CUSTOM_ENDPOINT: "http://127.0.0.1:9000",
+    JEV_CUSTOM_API_KEY: "self-hosted-key",
+    JEV_CUSTOM_MODEL: "my-model",
+    JEV_MODEL: undefined,
+  });
+  const originalFetch = globalThis.fetch;
+  let requestUrl = "";
+  let requestInit: RequestInit | undefined;
+  globalThis.fetch = (async (input, init) => {
+    requestUrl = String(input);
+    requestInit = init;
+    return jsonResponse({ answers: { ok: { type: "noul", noul: 0.6 } }, model: "custom-jev", usage: { input_tokens: 4, output_tokens: 2 } });
+  }) as typeof fetch;
+  try {
+    const credential = resolveCredential("custom");
+    assert.deepEqual(credential, {
+      kind: "endpoint",
+      url: "http://127.0.0.1:9000",
+      apiKey: "self-hosted-key",
+      source: "env",
+      origin: "$JEV_CUSTOM_ENDPOINT"
+    });
+    assert.equal(resolveModel("custom"), "my-model");
+
+    const response = await callJev("custom", credential!, {
+      state: { text: "hello" },
+      questions: { ok: { type: "noul", instructions: "ok?" } },
+      model: resolveModel("custom"),
+    });
+    // The URL is used as given: a self-hosted service may mount the contract anywhere, so we do not append a path.
+    assert.equal(requestUrl, "http://127.0.0.1:9000");
+    assert.deepEqual((requestInit?.headers as Record<string, string>).authorization, "Bearer self-hosted-key");
+    assert.equal(JSON.parse(String(requestInit?.body)).model, "my-model");
+    assert.equal((response.answers as Record<string, any>).ok.noul, 0.6);
+    assert.equal(response.model, "custom-jev");
+    assert.equal(response.usage?.totalTokens, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreEnv();
+  }
+});
+
+test("an empty 200 body names the endpoint instead of blaming the JSON", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("", { status: 200 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      () =>
+        callJev("custom", { kind: "endpoint", url: "https://jev.example.com", source: "env", origin: "test" }, {
+          state: "text",
+          questions: {},
+          model: "jev-latest",
+        }),
+      /returned an empty body \(HTTP 200\).*check the endpoint path/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+test("custom endpoint is required, must be absolute http(s), and the key stays optional", async () => {
+  const restoreEnv = setEnv({
+    JEV_CUSTOM_ENDPOINT: "127.0.0.1:8018",
+    JEV_CUSTOM_API_KEY: undefined,
+  });
+  try {
+    // A bare host:port is ambiguous (URL parsing reads it as a scheme), so it is rejected outright.
+    assert.equal(resolveCredential("custom"), null);
+    process.env.JEV_CUSTOM_ENDPOINT = "ftp://example.com";
+    assert.equal(resolveCredential("custom"), null);
+    process.env.JEV_CUSTOM_ENDPOINT = "https://jev.example.com/base/";
+    assert.deepEqual(resolveCredential("custom"), {
+      kind: "endpoint",
+      url: "https://jev.example.com/base/",
+      apiKey: undefined,
+      source: "env",
+      origin: "$JEV_CUSTOM_ENDPOINT"
+    });
+  } finally {
+    restoreEnv();
+  }
+
+  // A config path that does not exist keeps the "nothing configured" case independent of the real user config.
+  const restoreMissing = setEnv({ JEV_CUSTOM_ENDPOINT: undefined, JEV_CONFIG_FILE: os.tmpdir() + "/jev-absent-config.json" });
+  try {
+    // No endpoint anywhere means the platform cannot be used at all.
+    assert.equal(resolveCredential("custom"), null);
+  } finally {
+    restoreMissing();
+  }
+});
+
+test("/jev-platform custom <url> [model] persists both and switches", async () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/jev-custom-");
+  const store = dir + "/config.json";
+  const restoreEnv = setEnv({
+    JEV_PLATFORM: "typesafe",
+    JEV_CONFIG_FILE: store,
+    JEV_CUSTOM_ENDPOINT: undefined,
+    JEV_CUSTOM_API_KEY: undefined,
+    JEV_CUSTOM_MODEL: undefined,
+    JEV_MODEL: undefined,
+  });
+  const commands: Record<string, CommandDef> = {};
+  try {
+    extension({
+      registerTool() {},
+      registerCommand(name: string, definition: CommandDef) { commands[name] = definition; },
+    } as unknown as ExtensionAPI);
+    const notifications: Array<[string, string]> = [];
+    const ctx: Ctx = { ui: { notify: (text: string, level: string) => { notifications.push([text, level]); } } };
+
+    await commands["jev-platform"].handler("custom https://jev.example.com my-model", ctx);
+    assert.equal(process.env.JEV_PLATFORM, "custom");
+    assert.equal(process.env.JEV_CUSTOM_ENDPOINT, "https://jev.example.com");
+    assert.equal(process.env.JEV_CUSTOM_MODEL, "my-model");
+    const persisted = JSON.parse(fs.readFileSync(store, "utf8"));
+    assert.equal(persisted.customEndpoint, "https://jev.example.com");
+    assert.equal(persisted.customModel, "my-model");
+    assert.equal(persisted.platform, "custom");
+
+    // the persisted endpoint and model alone are enough in a fresh process
+    delete process.env.JEV_PLATFORM;
+    delete process.env.JEV_CUSTOM_ENDPOINT;
+    delete process.env.JEV_CUSTOM_MODEL;
+    assert.equal(resolvePlatform(), "custom");
+    const fromFile = resolveCredential("custom");
+    assert.ok(fromFile?.kind === "endpoint" && fromFile.url === "https://jev.example.com");
+    assert.equal(resolveModel("custom"), "my-model");
+
+    // a non-absolute endpoint is refused without switching anything
+    process.env.JEV_PLATFORM = "typesafe";
+    await commands["jev-platform"].handler("custom not-a-url", ctx);
+    assert.match(notifications.at(-1)![0], /Usage/);
+    assert.equal(process.env.JEV_PLATFORM, "typesafe");
+    assert.equal(JSON.parse(fs.readFileSync(store, "utf8")).platform, "custom", "the earlier choice is untouched");
+
+    // a third argument is a mistake, and `custom` with nothing stored says how to configure it
+    await commands["jev-platform"].handler("custom https://a.example.com m extra", ctx);
+    assert.match(notifications.at(-1)![0], /Unexpected argument/);
+    assert.equal(process.env.JEV_CUSTOM_ENDPOINT, undefined);
+    process.env.JEV_CONFIG_FILE = dir + "/empty.json";
+    await commands["jev-platform"].handler("custom", ctx);
+    assert.match(notifications.at(-1)![0], /Usage/);
+    assert.equal(process.env.JEV_PLATFORM, "typesafe", "an unconfigured custom platform is not switched to");
+  } finally {
+    restoreEnv();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a config path that is not a regular file is refused instead of redirected", () => {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/jev-cfg-");
+  const restoreEnv = setEnv({ JEV_CONFIG_FILE: dir });
+  try {
+    assert.throws(() => configPath(), /must point at a regular file/);
+    assert.throws(() => updateConfig({ localPort: 1234 }), /must point at a regular file/);
   } finally {
     restoreEnv();
     fs.rmSync(dir, { recursive: true, force: true });

@@ -1,9 +1,9 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { JevClient } from "../src/jev.js";
+import { getJev, resetJev } from "../src/jev.js";
 import type { JevEvaluationRequest } from "../src/types.js";
 import { isJevPlatform, JEV_PLATFORMS, persistPlatform, platformStorePath, resolveCredential, resolveModel, type JevPlatform } from "../src/platform.js";
-import { errorMessage, updateConfig } from "../src/config.js";
+import { errorMessage, updateConfig, validEndpoint, type JevConfig } from "../src/config.js";
 import { isJevLoggingEnabled, setJevLoggingEnabled } from "../src/log.js";
 
 const questionSchema = Type.Union([
@@ -32,9 +32,9 @@ const questionSchema = Type.Union([
 
 const USAGE_LOCAL = "Usage: /jev-platform local <port 1-65535>";
 const USAGE_LOG = "Usage: /jev-platform log on|off";
+const USAGE_CUSTOM = "Usage: /jev-platform custom <endpoint-url> [model]";
 
 export default function (pi: ExtensionAPI): void {
-  let jev = new JevClient();
 
   pi.registerTool({
     name: "jev_evaluate",
@@ -60,24 +60,30 @@ export default function (pi: ExtensionAPI): void {
     async execute(_toolCallId, params, signal) {
       const request = params as JevEvaluationRequest;
       try {
-        const response = await jev.evaluate(request, signal);
+        const response = await getJev().evaluate(request, signal);
         return {
           content: [{ type: "text", text: JSON.stringify(response, null, 2) }],
           details: response
         };
       } catch (error) {
         // The model sees which platform failed; the original error stays reachable as the cause.
-        throw new Error(`Jev evaluation on ${jev.platform} failed: ${errorMessage(error)}`, { cause: error });
+        throw new Error(`Jev evaluation on ${getJev().platform} failed: ${errorMessage(error)}`, { cause: error });
       }
     }
   });
 
   pi.registerCommand("jev-platform", {
-    description: "List or switch the active Jev platform (/jev-platform [name] | local <port> | log on|off)",
+    description: "List or switch the active Jev platform (/jev-platform [name] | local <port> | custom <url> [model] | log on|off)",
     handler: async (args, ctx) => {
-      const [requested, arg, ...extra] = args?.trim().toLowerCase().split(/\s+/).filter(Boolean) ?? [];
-      if (extra.length > 0) {
-        ctx.ui.notify(`Unexpected argument(s): ${extra.join(" ")}`, "warning");
+      // Only the platform name is lowercased: an endpoint URL and a model id can be case-sensitive.
+      const tokens = args?.trim().split(/\s+/).filter(Boolean) ?? [];
+      const requested = tokens[0]?.toLowerCase();
+      const arg = tokens[1];
+      const extra = tokens.slice(2);
+      // `custom <url> [model]` is the one form that takes a second argument.
+      const allowedExtra = requested === "custom" ? 1 : 0;
+      if (extra.length > allowedExtra) {
+        ctx.ui.notify(`Unexpected argument(s): ${extra.slice(allowedExtra).join(" ")}`, "warning");
         return;
       }
       if (requested === "log") {
@@ -96,12 +102,13 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       if (!requested) {
+        const active = getJev().platform;
         const lines = (Object.keys(JEV_PLATFORMS) as JevPlatform[]).map((name) => {
-          const marker = name === jev.platform ? "*" : " ";
+          const marker = name === active ? "*" : " ";
           const origin = resolveCredential(name)?.origin ?? "not configured";
           return `${marker} ${name} — ${origin}`;
         });
-        ctx.ui.notify(`Active platform: ${jev.platform}\n${lines.join("\n")}`, "info");
+        ctx.ui.notify(`Active platform: ${active}\n${lines.join("\n")}`, "info");
         return;
       }
       if (!isJevPlatform(requested)) {
@@ -125,20 +132,47 @@ export default function (pi: ExtensionAPI): void {
         }
       }
 
+      let customEndpoint: string | undefined;
+      let customModel: string | undefined;
+      if (requested === "custom") {
+        if (arg) {
+          const url = validEndpoint(arg);
+          if (!url) {
+            ctx.ui.notify(USAGE_CUSTOM, "warning");
+            return;
+          }
+          customEndpoint = url;
+          customModel = extra[0];
+        } else if (!resolveCredential("custom")) {
+          ctx.ui.notify(USAGE_CUSTOM, "warning");
+          return;
+        }
+      }
+
       // Persist first and touch the environment only once that worked: a failed write must not leave the running
       // process pointing at a platform that was never stored.
+      const configUpdate: Partial<JevConfig> = {};
+      if (localPort !== undefined) configUpdate.localPort = localPort;
+      if (customEndpoint !== undefined) configUpdate.customEndpoint = customEndpoint;
+      if (customModel !== undefined) configUpdate.customModel = customModel;
       try {
-        if (localPort !== undefined && !(process.env.JEV_PLATFORM_FILE ?? "").trim()) updateConfig({ localPort });
+        // A store file (JEV_PLATFORM_FILE) owns the persisted choice, so the config file stays untouched then.
+        if (Object.keys(configUpdate).length > 0 && !(process.env.JEV_PLATFORM_FILE ?? "").trim()) {
+          updateConfig(configUpdate);
+        }
         persistPlatform(requested);
       } catch (error) {
         ctx.ui.notify(`Unable to persist the Jev platform: ${errorMessage(error)}`, "error");
         return;
       }
       if (localPort !== undefined) process.env.JEV_LOCAL_PORT = String(localPort);
+      if (customEndpoint !== undefined) process.env.JEV_CUSTOM_ENDPOINT = customEndpoint;
+      if (customModel !== undefined) process.env.JEV_CUSTOM_MODEL = customModel;
       process.env.JEV_PLATFORM = requested;
-      jev = new JevClient();
+      // The shared client is rebuilt, so other extensions see the new platform on their next call.
+      resetJev();
 
-      const origin = jev.getCredentialOrigin() ?? "not configured";
+      const origin = getJev().getCredentialOrigin() ?? "not configured";
       ctx.ui.notify(
         `Jev platform switched to ${requested} (credential: ${origin}, model: ${resolveModel(requested)}; persisted to ${platformStorePath()})`,
         "info"

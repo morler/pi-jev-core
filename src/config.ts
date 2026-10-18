@@ -6,6 +6,10 @@ import * as path from "node:path";
 export interface JevConfig {
   platform?: string;
   localPort?: number;
+  /** Full URL of a self-hosted Jev endpoint, spoken to with the direct `{model, state, questions}` contract. */
+  customEndpoint?: string;
+  /** Model id for the custom endpoint when JEV_CUSTOM_MODEL and JEV_MODEL are both unset. */
+  customModel?: string;
   logging?: boolean;
 }
 
@@ -31,6 +35,15 @@ function errorReason(error: unknown): string {
   return typeof code === "string" ? code : error instanceof Error ? error.name : "unknown error";
 }
 
+
+/** A custom endpoint must be an absolute http(s) URL; anything else is not something we can post to. */
+export function validEndpoint(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!URL.canParse(trimmed)) return null;
+  const protocol = new URL(trimmed).protocol;
+  return protocol === "http:" || protocol === "https:" ? trimmed : null;
+}
 /**
  * Create the parent directory and swap `data` into `file` in one step: readers never see a partial file, and a crash
  * mid-write leaves the previous content intact. The temp name carries a UUID, so concurrent writers — including
@@ -68,6 +81,10 @@ function pickConfig(value: unknown): JevConfig {
     config.localPort = raw.localPort;
   }
   if (typeof raw.logging === "boolean") config.logging = raw.logging;
+  const endpoint = validEndpoint(raw.customEndpoint);
+  if (endpoint) config.customEndpoint = endpoint;
+  const customModel = typeof raw.customModel === "string" ? raw.customModel.trim() : "";
+  if (customModel) config.customModel = customModel;
   return config;
 }
 
@@ -86,6 +103,7 @@ export function readConfig(): JevConfig {
   try {
     return pickConfig(readConfigFile());
   } catch (error) {
+    // Deliberate: settings must never break an evaluation. The caller gets defaults, the user gets the reason.
     console.warn("Unable to read pi-jev-core config:", errorReason(error));
     return {};
   }

@@ -1,4 +1,4 @@
-export { JevClient, noulProbability, selectReferencedState } from "./jev.js";
+export { JevClient, getJev, resetJev, noulProbability, selectReferencedState } from "./jev.js";
 export {
   callJev,
   credentialHint,

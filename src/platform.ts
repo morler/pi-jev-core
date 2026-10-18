@@ -2,10 +2,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TypeSafeClient } from "@typesafe-ai/sdk";
-import { configPath, errorMessage, readConfig, updateConfig, writeFileAtomic } from "./config.js";
+import { configPath, errorMessage, readConfig, updateConfig, validEndpoint, writeFileAtomic } from "./config.js";
 
 /** The Jev API platforms this extension can talk to. */
-export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "local";
+export type JevPlatform = "typesafe" | "openrouter" | "cloudflare" | "vercel" | "local" | "custom";
 
 export interface PlatformSpec {
   /** Environment variable holding the API credential. */
@@ -25,6 +25,7 @@ export const JEV_PLATFORMS: Record<JevPlatform, PlatformSpec> = {
   cloudflare: { env: "CLOUDFLARE_API_TOKEN", secret: "cloudflare_api_token", model: "typesafe/jev" },
   vercel: { env: "AI_GATEWAY_API_KEY", secret: "ai_gateway_api_key", model: "typesafe-ai/jev" },
   local: { env: "JEV_LOCAL_PORT", model: "jev-latest" },
+  custom: { env: "JEV_CUSTOM_API_KEY", secret: "jev_custom_api_key", model: "jev-latest" },
 };
 
 /** Own-property check: `in` also accepts inherited keys such as `constructor` or `toString`. */
@@ -56,15 +57,15 @@ function optionalNumber(value: unknown): number | undefined {
 
 /** The SDK and the direct APIs disagree on casing, and either may omit counts; callers get one shape. */
 function normalizeUsage(value: unknown): JevRawResponse["usage"] {
-  const usage = asRecord(value);
-  if (!usage) return undefined;
-  const inputTokens = optionalNumber(usage.input_tokens) ?? optionalNumber(usage.inputTokens);
-  const outputTokens = optionalNumber(usage.output_tokens) ?? optionalNumber(usage.outputTokens);
+  const raw = asRecord(value);
+  if (!raw) return undefined;
+  const inputTokens = optionalNumber(raw.input_tokens) ?? optionalNumber(raw.inputTokens);
+  const outputTokens = optionalNumber(raw.output_tokens) ?? optionalNumber(raw.outputTokens);
   return {
     inputTokens,
     outputTokens,
     totalTokens:
-      optionalNumber(usage.total_tokens) ?? optionalNumber(usage.totalTokens) ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+      optionalNumber(raw.total_tokens) ?? optionalNumber(raw.totalTokens) ?? (inputTokens ?? 0) + (outputTokens ?? 0),
   };
 }
 
@@ -106,22 +107,50 @@ export function resolvePlatform(): JevPlatform {
   return readPersistedPlatform() ?? "typesafe";
 }
 
-/** Model id: explicit override, then JEV_MODEL, then the platform default. */
+/** Model id: explicit override, then JEV_MODEL, then the platform's own default or configured model. */
 export function resolveModel(platform: JevPlatform, override?: string): string {
   const fallback = platform === "typesafe" ? process.env.TYPESAFE_DEFAULT_MODEL?.trim() : undefined;
-  return override?.trim() || process.env.JEV_MODEL?.trim() || fallback || JEV_PLATFORMS[platform].model;
+  const custom = platform === "custom" ? process.env.JEV_CUSTOM_MODEL?.trim() || readConfig().customModel : undefined;
+  return override?.trim() || process.env.JEV_MODEL?.trim() || fallback || custom || JEV_PLATFORMS[platform].model;
 }
 
-/** How to reach a platform: an API key, or — for `local` — the port it listens on. */
+/** How to reach a platform: an API key, a fixed local port, or a self-hosted endpoint with an optional key. */
 export type Credential =
   | { kind: "apiKey"; key: string; source: "env" | "file"; origin: string }
-  | { kind: "port"; port: number; source: "env" | "file"; origin: string };
+  | { kind: "port"; port: number; source: "env" | "file"; origin: string }
+  | { kind: "endpoint"; url: string; apiKey?: string; source: "env" | "file"; origin: string };
 
 function isPort(value: string): boolean {
   return /^[0-9]+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535;
 }
 
-/** Credential for the platform: its environment variable, then the persisted port or its Pi secret file. */
+
+/** The Pi secret file for a platform. A missing file is "not configured"; an unreadable one is announced. */
+function readSecret(name: string): string | undefined {
+  const secretPath = path.join(os.homedir(), ".pi", "agent", "secrets", name);
+  try {
+    return fs.readFileSync(secretPath, "utf8").trim() || undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`Unable to read ${secretPath}:`, errorMessage(error));
+    }
+    return undefined;
+  }
+}
+/** The custom endpoint and where it came from: JEV_CUSTOM_ENDPOINT wins over the persisted choice. */
+function customEndpoint(): { url: string; source: "env" | "file"; origin: string } | undefined {
+  const fromEnv = process.env.JEV_CUSTOM_ENDPOINT?.trim();
+  if (fromEnv) {
+    const url = validEndpoint(fromEnv);
+    if (url) return { url, source: "env", origin: "$JEV_CUSTOM_ENDPOINT" };
+    console.warn("Ignoring JEV_CUSTOM_ENDPOINT: it must be an absolute http(s) URL.");
+    return undefined;
+  }
+  const url = validEndpoint(readConfig().customEndpoint);
+  return url ? { url, source: "file", origin: configPath() } : undefined;
+}
+
+/** Credential for the platform: its environment variable, then the persisted port, endpoint or its Pi secret file. */
 export function resolveCredential(platform: JevPlatform = resolvePlatform()): Credential | null {
   const spec = JEV_PLATFORMS[platform];
   if (platform === "local") {
@@ -134,34 +163,41 @@ export function resolveCredential(platform: JevPlatform = resolvePlatform()): Cr
     return null;
   }
 
+  if (platform === "custom") {
+    const endpoint = customEndpoint();
+    if (!endpoint) return null;
+    // The key is optional: a self-hosted endpoint may be open, exactly like the local platform.
+    const apiKey = process.env[spec.env]?.trim() || (spec.secret ? readSecret(spec.secret) : undefined);
+    return { kind: "endpoint", url: endpoint.url, apiKey, source: endpoint.source, origin: endpoint.origin };
+  }
+
   const envKey = process.env[spec.env]?.trim();
   if (envKey) return { kind: "apiKey", key: envKey, source: "env", origin: `$${spec.env}` };
 
   // A hosted platform that names no secret file cannot be configured from disk.
   if (!spec.secret) return null;
-  const secretPath = path.join(os.homedir(), ".pi", "agent", "secrets", spec.secret);
-  try {
-    const content = fs.readFileSync(secretPath, "utf8").trim();
-    if (content) {
-      return { kind: "apiKey", key: content, source: "file", origin: `~/.pi/agent/secrets/${spec.secret}` };
-    }
-  } catch (error) {
-    // A missing secret file just means "not configured"; an unreadable one is a failure the user must hear about.
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn(`Unable to read ${secretPath}:`, errorMessage(error));
-    }
-  }
-
-  return null;
+  const secret = readSecret(spec.secret);
+  return secret ? { kind: "apiKey", key: secret, source: "file", origin: `~/.pi/agent/secrets/${spec.secret}` } : null;
 }
 
 /** How to fix a missing credential, for error messages and status output. */
 export function credentialHint(platform: JevPlatform = resolvePlatform()): string {
   const spec = JEV_PLATFORMS[platform];
   if (platform === "local") return "Run /jev-platform local <port> or set JEV_LOCAL_PORT (1-65535)";
+  if (platform === "custom") {
+    return "Run /jev-platform custom <endpoint-url> or set JEV_CUSTOM_ENDPOINT (the full http(s) URL that receives the request)";
+  }
   return `Set ${spec.env} or write ~/.pi/agent/secrets/${spec.secret}`;
 }
 
+/** What a platform needs configured, for "missing X" messages. */
+export function credentialNoun(platform: JevPlatform = resolvePlatform()): string {
+  if (platform === "local") return "port";
+  if (platform === "custom") return "endpoint";
+  return "API key";
+}
+
+/** One System One request: what to ask plus the transport choices for getting it there. */
 export interface JevCall {
   state: unknown;
   questions: Record<string, unknown>;
@@ -188,14 +224,27 @@ export async function callJev(
 
   if (platform === "local") {
     if (credential.kind !== "port") throw new Error("The local platform is addressed by port, not by an API key.");
-    const json = await postJson(
+    const payload = await postJson(
       ENDPOINTS.local(credential.port),
       {},
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,
       doFetch
     );
-    return direct(json);
+    return direct(payload);
+  }
+
+  if (platform === "custom") {
+    if (credential.kind !== "endpoint") throw new Error("The custom platform is addressed by its endpoint URL.");
+    // A self-hosted endpoint speaks the direct `{model, state, questions}` contract, with a bearer key when it wants one.
+    const payload = await postJson(
+      credential.url,
+      credential.apiKey ? bearer(credential.apiKey) : {},
+      { model: call.model, state: call.state, questions: call.questions },
+      call.signal,
+      doFetch
+    );
+    return direct(payload);
   }
 
   // Everything below talks to a hosted API, so a port credential here is a caller bug.
@@ -216,19 +265,19 @@ export async function callJev(
   }
 
   if (platform === "openrouter") {
-    const json = await postJson(
+    const payload = await postJson(
       ENDPOINTS.openrouter,
       bearer(apiKey),
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,
       doFetch
     );
-    return direct(json);
+    return direct(payload);
   }
 
   if (platform === "cloudflare") {
     const { accountId, gatewayId } = cloudflareConfig();
-    const json = await postJson(
+    const payload = await postJson(
       `${ENDPOINTS.cloudflare}/${encodeURIComponent(accountId)}/ai/run`,
       {
         ...bearer(apiKey),
@@ -241,11 +290,11 @@ export async function callJev(
       call.signal,
       doFetch
     );
-    return direct(unwrapEnvelope(json));
+    return direct(unwrapEnvelope(payload));
   }
 
   // vercel: AI Gateway evaluation endpoint, taking the same question objects as the direct APIs.
-  const json = await postJson(
+  const payload = await postJson(
     ENDPOINTS.vercel,
     {
       ...bearer(apiKey),
@@ -264,7 +313,7 @@ export async function callJev(
     call.signal,
     doFetch
   );
-  return { ...direct(json), confidence: extractConfidence(json) };
+  return { ...direct(payload), confidence: extractConfidence(payload) };
 }
 
 /** The gateway names TypeSafe's `noul` question type `boolean`; choice and score match. */
@@ -331,7 +380,7 @@ async function postJson(
   signal: AbortSignal | undefined,
   fetchImpl: typeof fetch
 ): Promise<unknown> {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetchImpl(url, {
@@ -339,11 +388,11 @@ async function postJson(
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
       // The caller's signal and the deadline both count: whichever fires first aborts the request.
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+      signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
       redirect: "error",
     });
   } catch (error) {
-    if (timeout.aborted) throw new Error(`Jev request timed out after ${REQUEST_TIMEOUT_MS} ms.`, { cause: error });
+    if (deadline.aborted) throw new Error(`Jev request timed out after ${REQUEST_TIMEOUT_MS} ms.`, { cause: error });
     throw new Error(`Jev request failed: ${errorMessage(error)}`, { cause: error });
   }
 
@@ -352,8 +401,19 @@ async function postJson(
     throw new Error(`Jev request failed (HTTP ${response.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`);
   }
 
+  let text: string;
   try {
-    return await response.json();
+    text = await response.text();
+  } catch (error) {
+    if (deadline.aborted) throw new Error(`Jev request timed out after ${REQUEST_TIMEOUT_MS} ms.`, { cause: error });
+    throw new Error(`Jev request failed: ${errorMessage(error)}`, { cause: error });
+  }
+  // A bare host or a wrong path commonly answers every request with an empty 200; name that instead of "invalid JSON".
+  if (!text.trim()) {
+    throw new Error(`Jev request to ${url} returned an empty body (HTTP ${response.status}): check the endpoint path.`);
+  }
+  try {
+    return JSON.parse(text);
   } catch (error) {
     throw new Error("Jev request failed: the response body was not valid JSON.", { cause: error });
   }

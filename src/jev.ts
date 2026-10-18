@@ -2,6 +2,7 @@ import { choice, noul, score } from "@typesafe-ai/sdk";
 import {
   callJev,
   credentialHint,
+  credentialNoun,
   resolveCredential,
   resolveModel,
   resolvePlatform,
@@ -132,6 +133,21 @@ export class JevClient {
     return resolveCredential(this.platform)?.origin ?? null;
   }
 
+  /**
+   * Identity of the model this client talks to, for cache keys: a platform, model or key change must
+   * invalidate anything cached against it. The origin is left out — the same key from the environment
+   * and from a secret file is the same connection.
+   */
+  public connectionKey(): string {
+    const credential = resolveCredential(this.platform);
+    const secret = !credential
+      ? "unconfigured"
+      : credential.kind === "apiKey" ? credential.key
+      : credential.kind === "port" ? `:${credential.port}`
+      : `${credential.url}|${credential.apiKey ?? ""}`;
+    return `${this.platform}|${resolveModel(this.platform)}|${secret}`;
+  }
+
   public async evaluate(
     request: JevEvaluationRequest,
     signal?: AbortSignal
@@ -141,7 +157,7 @@ export class JevClient {
     const credential = resolveCredential(this.platform);
     if (!credential) {
       const err = new Error(
-        `Missing ${this.platform === "local" ? "port" : "API key"} for the ${this.platform} platform. ${credentialHint(this.platform)}.`
+        `Missing ${credentialNoun(this.platform)} for the ${this.platform} platform. ${credentialHint(this.platform)}.`
       );
       this.recordFailure(seq, request, err);
       throw err;
@@ -255,4 +271,23 @@ export class JevClient {
     this.recordFailure(seq, request, error);
     throw error;
   }
+}
+
+let shared: JevClient | undefined;
+
+/**
+ * The process-wide client, so every extension answers on the platform /jev-platform selected.
+ * Call it at use time: a client captured at load time keeps the platform it was built with.
+ */
+export function getJev(): JevClient {
+  // A client is fixed to its platform, and each copy of this module caches its own: rebuild on a switch
+  // rather than trusting that every copy saw the reset.
+  const platform = resolvePlatform();
+  if (shared && shared.platform !== platform) shared = undefined;
+  return (shared ??= new JevClient());
+}
+
+/** Drop the shared client so the next getJev() re-reads the configured platform. */
+export function resetJev(): void {
+  shared = undefined;
 }
