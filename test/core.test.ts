@@ -82,7 +82,7 @@ test("jev_evaluate sends and normalizes all three question types", async () => {
     return jsonResponse({
       model: "typesafe/jev-1.13",
       answers: {
-        breaking: { type: "noul", noul: 0.9 },
+        breaking: { type: "noul", noul: 0.9, confidence: 0.8 },
         kind: { type: "choice", choice: "api", distribution: { api: 0.8, other: 0.2 } },
         severity: { type: "score", score: 1, confidence: 0.7 }
       },
@@ -122,6 +122,7 @@ test("jev_evaluate sends and normalizes all three question types", async () => {
     assert.deepEqual(body.questions.kind.criteria, { api: "Public API change", other: "Other" });
     assert.deepEqual(body.questions.severity.criteria, ["Critical", "High", "Low"]);
     assert.equal(result.details.answers.breaking.value, 0.9);
+    assert.equal(result.details.answers.breaking.confidence, 0.8);
     assert.equal(result.details.answers.kind.value, "api");
     assert.equal(result.details.answers.kind.distribution.api, 0.8);
     assert.equal(result.details.answers.severity.value, 1);
@@ -267,7 +268,8 @@ test("score questions with fewer than two criteria fail fast locally, never reac
 });
 
 test("/jev-platform lists, validates, and switches platforms", async () => {
-  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key" });
+  const configDir = fs.mkdtempSync(os.tmpdir() + "/jev-config-");
+  const restoreEnv = setEnv({ JEV_PLATFORM: "openrouter", OPENROUTER_API_KEY: "unit-test-key", JEV_CONFIG_FILE: configDir + "/pi-jev-core.json" });
   try {
     const commands: Record<string, any> = {};
     let tool: any;
@@ -296,21 +298,15 @@ test("/jev-platform lists, validates, and switches platforms", async () => {
     assert.equal(notifications.at(-1)![1], "warning");
     assert.match(notifications.at(-1)![0], /Unknown platform/);
 
-    const configDir = fs.mkdtempSync(os.tmpdir() + "/jev-config-");
-    const restoreConfigEnv = setEnv({ JEV_CONFIG_FILE: configDir + "/pi-jev-core.json" });
-    try {
-      await command.handler("log on", ctx);
-      assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, true);
-      assert.match(notifications.at(-1)![0], /enabled/);
-      await command.handler("log off", ctx);
-      assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, false);
-      assert.match(notifications.at(-1)![0], /disabled/);
-    } finally {
-      restoreConfigEnv();
-      fs.rmSync(configDir, { recursive: true, force: true });
-    }
+    await command.handler("log on", ctx);
+    assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, true);
+    assert.match(notifications.at(-1)![0], /enabled/);
+    await command.handler("log off", ctx);
+    assert.equal(JSON.parse(fs.readFileSync(configDir + "/pi-jev-core.json", "utf8")).logging, false);
+    assert.match(notifications.at(-1)![0], /disabled/);
   } finally {
     restoreEnv();
+    fs.rmSync(configDir, { recursive: true, force: true });
   }
 });
 
@@ -371,6 +367,23 @@ test("local platform posts to the configured port and needs no API key", async (
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv();
+  }
+});
+
+test("callJev surfaces an HTTP failure instead of parsing a body", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("boom", { status: 503 })) as typeof fetch;
+  try {
+    await assert.rejects(
+      () => callJev("local", { kind: "port", port: 8123, source: "env", origin: "$JEV_LOCAL_PORT" }, {
+        state: { text: "hello" },
+        questions: { ok: { type: "noul", instructions: "ok?" } },
+        model: "jev-latest",
+      }),
+      /Jev request failed \(HTTP 503\): boom/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -181,6 +181,7 @@ export class JevClient {
           answers[id] = {
             type: "noul",
             value: raw?.noul ?? raw?.probability ?? raw?.value,
+            confidence,
             raw: rawAns,
           };
         } else if (qConfig.type === "score") {
