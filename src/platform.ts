@@ -136,7 +136,7 @@ export async function callJev(
   if (platform === "local") {
     if (credential.kind !== "port") throw new Error("The local platform is addressed by port, not by an API key.");
     const json = await postJson(
-      `http://127.0.0.1:${credential.port}/`,
+      `http://127.0.0.1:${credential.port}/v1/systemone`,
       {},
       { model: call.model, state: call.state, questions: call.questions },
       call.signal,

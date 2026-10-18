@@ -67,13 +67,13 @@ export default function (pi: ExtensionAPI): void {
   pi.registerCommand("jev-platform", {
     description: "List or switch the active Jev platform (/jev-platform [name] | local <port>)",
     handler: async (args, ctx) => {
-      const [requested, logState] = args?.trim().toLowerCase().split(/\s+/, 2) ?? [];
+      const [requested, arg] = args?.trim().toLowerCase().split(/\s+/, 2) ?? [];
       if (requested === "log") {
-        if (!["on", "off"].includes(logState ?? "")) {
+        if (!["on", "off"].includes(arg ?? "")) {
           ctx.ui.notify(`Usage: /jev-platform log on|off (currently ${isJevLoggingEnabled() ? "on" : "off"})`, "warning");
           return;
         }
-        const enabled = logState === "on";
+        const enabled = arg === "on";
         setJevLoggingEnabled(enabled);
         ctx.ui.notify(`Jev logging ${enabled ? "enabled" : "disabled"}`, "info");
         return;
@@ -92,9 +92,8 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       if (requested === "local") {
-        const portInput = logState;
-        if (portInput) {
-          const port = Number(portInput);
+        if (arg) {
+          const port = Number(arg);
           if (!Number.isInteger(port) || port < 1 || port > 65535) {
             ctx.ui.notify("Usage: /jev-platform local <port 1-65535>", "warning");
             return;
